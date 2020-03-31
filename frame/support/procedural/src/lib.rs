@@ -291,3 +291,43 @@ pub fn decl_storage(input: TokenStream) -> TokenStream {
 pub fn construct_runtime(input: TokenStream) -> TokenStream {
 	construct_runtime::construct_runtime(input)
 }
+
+#[proc_macro_attribute]
+pub fn pallet(_attr: TokenStream, item: TokenStream) -> TokenStream {
+	// TODO TODO: assert attr is empty
+	let item = syn::parse_macro_input!(item as syn::ItemMod);
+
+	// TODO TODO: search for:
+	// * trait -> const metadata
+	// * module -> implement stuff on it
+	// * call -> call enum
+	// * error -> error metadata
+	// * event -> event metadata
+
+	// TODO TODO: for decl_event we can easily implement a good derive just by assigning where
+	// clause to each field
+	// Trait is just read and generate const_metadata
+	let trait_item = ();
+	// Trait is just read or modified to add phantomdata, see with IDE
+	let module_item = ();
+	// genesis is just read and generate maybe something for AutoConstructRuntime
+	let genesis_config_item = ();
+	// Derive manually Clone, Eq and PartialEq same as call or same as Encode/Decode
+	// generate metadata and associate to module.
+	// Also define deposit_event
+	// Check that overarching associated type Event in trait exists
+	let event_item = ();
+	// Add some variant and generate metadata and associate to Module
+	let error_item = ();
+	// Call is expanded!
+	let call_item = ();
+	// Item is just read or modified to add phantomdata, see with IDE
+	// And generate StoragePrefix
+	let store_decl_item = ();
+	// Trait is just read and Generate metadata
+	let store_impl_item = ();
+
+	for item in item.content.unwrap().1.iter() {
+	}
+	unimplemented!();
+}
