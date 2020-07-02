@@ -276,7 +276,7 @@ impl MutItemAttrs for syn::Item {
 			Self::Type(item) => item.attrs.as_mut(),
 			Self::Union(item) => item.attrs.as_mut(),
 			Self::Use(item) => item.attrs.as_mut(),
-			Self::Verbatim(TokenStream) => todo!("unreachable because we don't expanded yet"),
+			Self::Verbatim(_) => todo!("unreachable because we don't expanded yet"),
 			Self::__Nonexhaustive => todo!(),
 		}
 	}
@@ -290,7 +290,7 @@ impl MutItemAttrs for syn::TraitItem {
 			Self::Method(item) => item.attrs.as_mut(),
 			Self::Type(item) => item.attrs.as_mut(),
 			Self::Macro(item) => item.attrs.as_mut(),
-			Self::Verbatim(TokenStream) => todo!("unreachable because we don't expanded yet"),
+			Self::Verbatim(_) => todo!("unreachable because we don't expanded yet"),
 			Self::__Nonexhaustive => todo!(),
 		}
 	}
