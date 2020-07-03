@@ -16,9 +16,10 @@
 // limitations under the License.
 
 use quote::ToTokens;
+use syn::spanned::Spanned;
 
 ///#[support2::pallet]
-/// ```rust
+/// ```nocompile
 /// pub mod pallet {
 /// 	use support2::prelude::*; // Import support2::Map and DoubleMap and Value
 ///
@@ -92,12 +93,54 @@ pub struct Def {
 	trait_: TraitDef,
 	module: ModuleDef,
 	module_interface: ModuleInterfaceDef,
-	// call: CallDef,
+	call: CallDef,
 	// error: ErrorDef,
 	// event: EventDef,
 	// origin: OriginDef,
 	// storage: StorageDef,
 	// inherent: InherentDef,
+}
+
+pub struct CallDef {
+	has_instance: bool,
+	impl_: syn::ItemImpl,
+	methods: Vec<syn::Signature>,
+	call: keyword::Call,
+}
+
+impl CallDef {
+	// TODO TODO: maybe give attributes
+	fn try_from(item: syn::Item) -> syn::Result<Self> {
+		if let syn::Item::Impl(mut item) = item {
+			syn::parse2::<CheckImplGenerics>(item.generics.params.to_token_stream())?;
+			syn::parse2::<CheckModuleUseType>(item.self_ty.to_token_stream())?;
+
+			let call = item.trait_.take()
+				.ok_or_else(|| {
+					let msg = "Invalid pallet::call, expect impl.. Call for Module..";
+					syn::Error::new(item.span(), msg)
+				})?.1;
+			let call = syn::parse2::<keyword::Call>(call.to_token_stream())?;
+
+			let mut methods = vec![];
+			for impl_item in &item.items {
+				if let syn::ImplItem::Method(method) = impl_item {
+					methods.push(method.sig.clone());
+				} else {
+					todo!();
+				}
+			}
+
+			Ok(Self {
+				call,
+				has_instance: item.generics.params.len() == 2,
+				impl_: item,
+				methods
+			})
+		} else {
+			Err(syn::Error::new(item.span(), "Invalid pallet::call, expect item impl"))
+		}
+	}
 }
 
 pub struct ConstMetadataDef {
@@ -139,6 +182,10 @@ pub struct TraitDef {
 
 mod keyword {
 	syn::custom_keyword!(I);
+	syn::custom_keyword!(Module);
+	syn::custom_keyword!(Call);
+	syn::custom_keyword!(call);
+	syn::custom_keyword!(Trait);
 	syn::custom_keyword!(T);
 	syn::custom_keyword!(Instance);
 	syn::custom_keyword!(DefaultInstance);
@@ -149,8 +196,8 @@ mod keyword {
 	syn::custom_keyword!(module_interface);
 }
 
-pub struct CheckTraitGenericParam;
-impl syn::parse::Parse for CheckTraitGenericParam {
+pub struct CheckTraitDefGenerics;
+impl syn::parse::Parse for CheckTraitDefGenerics {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		input.parse::<keyword::I>()?;
 		input.parse::<syn::Token![:]>()?;
@@ -163,14 +210,67 @@ impl syn::parse::Parse for CheckTraitGenericParam {
 	}
 }
 
-pub struct CheckModuleGenericParam;
-impl syn::parse::Parse for CheckModuleGenericParam {
+pub struct CheckStructDefGenerics;
+impl syn::parse::Parse for CheckStructDefGenerics {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		input.parse::<keyword::T>()?;
 		if input.peek(syn::Token![,]) {
+			input.parse::<syn::Token![,]>()?;
 			input.parse::<keyword::I>()?;
 			input.parse::<syn::Token![=]>()?;
 			input.parse::<keyword::DefaultInstance>()?;
+		}
+		// TODO TODO: parse terminated.
+
+		Ok(Self)
+	}
+}
+
+pub struct CheckModuleUseType;
+impl syn::parse::Parse for CheckModuleUseType {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		input.parse::<keyword::Module>()?;
+		input.parse::<syn::Token![<]>()?;
+		input.parse::<keyword::T>()?;
+		if input.peek(syn::Token![,]) {
+			input.parse::<syn::Token![,]>()?;
+			input.parse::<keyword::I>()?;
+		}
+		input.parse::<syn::Token![>]>()?;
+		// TODO TODO: parse terminated.
+
+		Ok(Self)
+	}
+}
+
+pub struct CheckStructUseGenerics;
+impl syn::parse::Parse for CheckStructUseGenerics {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		input.parse::<keyword::T>()?;
+		if input.peek(syn::Token![,]) {
+			input.parse::<syn::Token![,]>()?;
+			input.parse::<keyword::I>()?;
+		}
+		// TODO TODO: parse terminated.
+
+		Ok(Self)
+	}
+}
+
+pub struct CheckImplGenerics;
+impl syn::parse::Parse for CheckImplGenerics {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		input.parse::<keyword::T>()?;
+		input.parse::<syn::Token![:]>()?;
+		input.parse::<keyword::Trait>()?;
+		if input.peek(syn::Token![<]) {
+			input.parse::<syn::Token![<]>()?;
+			input.parse::<keyword::I>()?;
+			input.parse::<syn::Token![>]>()?;
+			input.parse::<syn::Token![,]>()?;
+			input.parse::<keyword::I>()?;
+			input.parse::<syn::Token![:]>()?;
+			input.parse::<keyword::Instance>()?;
 		}
 		// TODO TODO: parse terminated.
 
@@ -182,13 +282,19 @@ impl TraitDef {
 	// TODO TODO: maybe give attributes
 	fn try_from(item: syn::Item) -> syn::Result<Self> {
 		if let syn::Item::Trait(mut item) = item {
-			assert!(item.ident == "Trait", "TODO TODO"); // TODO TODO: maybe leaverage
-			assert!(item.generics.where_clause.is_none(), "TODO TODO"); // maybe leverae
-			assert!(item.generics.params.len() <= 1, "TODO TODO"); // maybe leverage ?? probably not isn't it.
+			syn::parse2::<keyword::Trait>(item.ident.to_token_stream())?;
+			if item.generics.where_clause.is_some() {
+				let msg = "Invalid pallet::trait, expect no where clause";
+				return Err(syn::Error::new(item.generics.where_clause.span(), msg));
+			}
+			if item.generics.params.len() > 1 {
+				let msg = "Invalid pallet::trait, expect no more than one generics";
+				return Err(syn::Error::new(item.generics.params[2].span(), msg));
+			}
 
 			let has_instance;
 			if let Some(instance) = item.generics.params.first() {
-				syn::parse2::<CheckTraitGenericParam>(instance.to_token_stream())?;
+				syn::parse2::<CheckTraitDefGenerics>(instance.to_token_stream())?;
 				has_instance = true;
 			} else {
 				has_instance = false;
@@ -197,14 +303,23 @@ impl TraitDef {
 			let mut consts_metadata = vec![];
 			for trait_item in &mut item.items {
 				let trait_item_attrs: Vec<PalletTraitAttr> = take_item_attrs(trait_item)?;
-				assert!(trait_item_attrs.len() <= 1, "TODO TODO");
+
+				if trait_item_attrs.len() > 1 {
+					let msg = "Invalid attribute in pallet::trait, only one attribute is expected";
+					return Err(syn::Error::new(trait_item_attrs[2].span(), msg));
+				}
+
 				match trait_item_attrs.first() {
-					Some(PalletTraitAttr::Const) => match trait_item {
+					Some(PalletTraitAttr::Const(_span)) => match trait_item {
 						syn::TraitItem::Type(type_) => {
 							let const_ = syn::parse2::<ConstMetadataDef>(type_.to_token_stream())?;
 							consts_metadata.push(const_);
 						},
-						_ => panic!("TODO TODO: error"),
+						_ => {
+							let msg = "Invalid pallet::const in pallet::trait, expect type trait
+							item";
+							return Err(syn::Error::new(trait_item.span(), msg));
+						},
 					},
 					None => (),
 				}
@@ -212,7 +327,8 @@ impl TraitDef {
 
 			Ok(Self { item, has_instance, consts_metadata })
 		} else {
-			panic!("TODO TODO");
+			let msg = "Invalid pallet::trait, expect Trait definition";
+			Err(syn::Error::new(item.span(), msg))
 		}
 	}
 }
@@ -226,15 +342,22 @@ impl ModuleDef {
 	// TODO TODO: maybe give attributes
 	// Check has one or two generics named T or T, I and default instance is set
 	fn try_from(item: syn::Item) -> syn::Result<Self> {
-		if let syn::Item::Struct(mut item) = item {
-			assert!(item.ident == "Module", "TODO TODO"); // TODO TODO: maybe leaverage
+		if let syn::Item::Struct(item) = item {
+			syn::parse2::<keyword::Module>(item.ident.to_token_stream())?;
+			if !matches!(item.vis, syn::Visibility::Public(_)) {
+				let msg = "Invalid pallet::module, Module must be public";
+				return Err(syn::Error::new(item.vis.span(), msg));
+			}
 
-			syn::parse2::<CheckModuleGenericParam>(item.generics.params.to_token_stream())?;
+			syn::parse2::<CheckStructDefGenerics>(item.generics.params.to_token_stream())?;
 			let has_instance = item.generics.params.len() == 2;
+
+			// TODO TODO : also check fields.
 
 			Ok(Self { item, has_instance })
 		} else {
-			panic!("TODO TODO");
+			let msg = "Invalid pallet::module, expect struct definition";
+			Err(syn::Error::new(item.span(), msg))
 		}
 	}
 }
@@ -247,12 +370,26 @@ impl ModuleInterfaceDef {
 	// TODO TODO: maybe give attributes
 	// Check has one or two generics named T or T, I and default instance is set
 	fn try_from(item: syn::Item) -> syn::Result<Self> {
-		if let syn::Item::Impl(mut item) = item {
-			assert!(item.trait_.as_ref().unwrap().1.segments.last().unwrap().ident == "ModuleInterface", "TODO TODO");
-			// TODO TODO: maybe assert correct generics.
+		if let syn::Item::Impl(item) = item {
+			let item_trait = &item.trait_.as_ref()
+				.ok_or_else(|| {
+					let msg = "Invalid pallet::module_interface, expect impl... ModuleInterface for
+						...";
+					syn::Error::new(item.span(), msg)
+				})?.1;
+
+			if item_trait.segments.len() != 1
+				|| item_trait.segments[0].ident != "ModuleInterface"
+			{
+				let msg = "Invalid pallet::module_interface, expect trait to be `ModuleInterface`";
+				return Err(syn::Error::new(item_trait.span(), msg));
+			}
+
+			// TODO TODO: we can check: it is for Module with correct generics, and impl_bounds has correct generics
 			Ok(Self { item })
 		} else {
-			panic!("TODO TODO");
+			let msg = "Invalid pallet::module_interface, expect item impl";
+			Err(syn::Error::new(item.span(), msg))
 		}
 	}
 }
@@ -301,7 +438,8 @@ impl MutItemAttrs for syn::TraitItem {
 pub enum PalletAttr {
 	Trait,
 	Module,
-	ModuleInterface
+	ModuleInterface,
+	Call,
 }
 
 impl syn::parse::Parse for PalletAttr {
@@ -316,6 +454,8 @@ impl syn::parse::Parse for PalletAttr {
 			Ok(PalletAttr::Module)
 		} else if lookahead.peek(keyword::module_interface) {
 			Ok(PalletAttr::ModuleInterface)
+		} else if lookahead.peek(keyword::call) {
+			Ok(PalletAttr::Call)
 		} else {
 			Err(lookahead.error())
 		}
@@ -324,7 +464,15 @@ impl syn::parse::Parse for PalletAttr {
 
 // start with pallet::trait_::
 pub enum PalletTraitAttr {
-	Const,
+	Const(proc_macro2::Span),
+}
+
+impl Spanned for PalletTraitAttr {
+	fn span(&self) -> proc_macro2::Span {
+		match self {
+			Self::Const(span) => span.clone(),
+		}
+	}
 }
 
 impl syn::parse::Parse for PalletTraitAttr {
@@ -334,7 +482,7 @@ impl syn::parse::Parse for PalletTraitAttr {
 
 		let lookahead = input.lookahead1();
 		if lookahead.peek(keyword::const_) { // TODO TODO: maybe `const` is doable
-			Ok(PalletTraitAttr::Const)
+			Ok(PalletTraitAttr::Const(input.parse::<keyword::const_>()?.span()))
 		} else {
 			Err(lookahead.error())
 		}
@@ -379,6 +527,7 @@ pub fn pallet(_attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> 
 }
 
 pub fn pallet_from_item_mod(item: syn::ItemMod) -> syn::Result<proc_macro2::TokenStream> {
+	let item_span = item.span().clone();
 	let items = &mut item.content.expect("TODO TODO: mandatory inline").1;
 
 	// First passe get information for generations
@@ -390,6 +539,7 @@ pub fn pallet_from_item_mod(item: syn::ItemMod) -> syn::Result<proc_macro2::Toke
 	let mut trait_def = None;
 	let mut module_def = None;
 	let mut module_interface_def = None;
+	let mut call_def = None;
 	let mut other_items = vec![];
 
 	for mut item in items.drain(..) {
@@ -402,14 +552,17 @@ pub fn pallet_from_item_mod(item: syn::ItemMod) -> syn::Result<proc_macro2::Toke
 			Some(PalletAttr::Module) => module_def = Some(ModuleDef::try_from(item)?),
 			Some(PalletAttr::ModuleInterface) =>
 				module_interface_def = Some(ModuleInterfaceDef::try_from(item)?),
+			Some(PalletAttr::Call) => call_def = Some(CallDef::try_from(item)?),
 			None => other_items.push(item),
 		}
 	}
 
-	let def = Def {
-		trait_: trait_def.expect("TODO TODO"),
-		module: module_def.expect("TODO TODO"),
-		module_interface: module_interface_def.expect("TODO TODO"),
+	let _def = Def {
+		trait_: trait_def.ok_or_else(|| syn::Error::new(item_span, "Missing pallet::trait_"))?,
+		module: module_def.ok_or_else(|| syn::Error::new(item_span, "Missing pallet::module"))?,
+		module_interface: module_interface_def
+			.ok_or_else(|| syn::Error::new(item_span, "Missing pallet::module_interface"))?,
+		call: call_def.ok_or_else(|| syn::Error::new(item_span, "Missing pallet::call"))?,
 	};
 
 	// // TODO TODO: search for:
