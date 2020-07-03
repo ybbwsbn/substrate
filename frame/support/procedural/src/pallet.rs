@@ -43,7 +43,7 @@ use syn::spanned::Spanned;
 /// 		fn toto(#origin, #[compact] a: ()) {}
 /// 	}
 ///
-/// 	#[error] // expand metadata,
+/// 	#[pallet::error] // expand metadata,
 /// 	pub enum Error {
 /// 		/// doc
 /// 		InsufficientProposersBalance,
@@ -67,6 +67,10 @@ use syn::spanned::Spanned;
 /// 	#[storage] // idem above
 /// 	pub struct TotalBalance2<T>; impl<T: Trait> Map for TotalBalance2<T> {}
 ///
+///		pub struct TotalBalance<T> {
+///			key: Type
+///			query: Type
+///		}
 /// 	pallet_storage!(TotalBalance config(): map hasher(MyHasher) u32 => u32;);
 ///
 /// 	#[genesis_config]
@@ -94,18 +98,25 @@ pub struct Def {
 	module: ModuleDef,
 	module_interface: ModuleInterfaceDef,
 	call: CallDef,
-	// error: ErrorDef,
-	// event: EventDef,
-	// origin: OriginDef,
 	// storage: StorageDef,
-	// inherent: InherentDef,
+	// error: Option<ErrorDef>,
+	// event: Option<EventDef>,
+	// origin: Option<OriginDef>,
+	// inherent: Option<InherentDef>,
 }
 
 pub struct CallDef {
 	has_instance: bool,
 	impl_: syn::ItemImpl,
-	methods: Vec<syn::Signature>,
+	methods: Vec<CallVariantDef>,
 	call: keyword::Call,
+}
+
+pub struct CallVariantDef {
+	// has_instance: bool, ??
+	fn_: syn::Ident,
+	args: Vec<(bool, Box<syn::Type>)>,
+	weight: syn::Expr,
 }
 
 impl CallDef {
@@ -123,11 +134,56 @@ impl CallDef {
 			let call = syn::parse2::<keyword::Call>(call.to_token_stream())?;
 
 			let mut methods = vec![];
-			for impl_item in &item.items {
+			for impl_item in &mut item.items {
 				if let syn::ImplItem::Method(method) = impl_item {
-					methods.push(method.sig.clone());
+					if method.sig.inputs.len() == 0 {
+						let msg = "Invalid pallet::call, must have at least origin arg";
+						return Err(syn::Error::new(method.sig.inputs.span(), msg));
+					}
+					syn::parse2::<CheckDispatchableFirstArg>(method.sig.inputs[0].to_token_stream())?;
+
+					if let syn::ReturnType::Type(_, type_) = &method.sig.output {
+						syn::parse2::<keyword::DispatchResultWithPostInfo>(type_.to_token_stream())?;
+					} else {
+						let msg = "Invalid pallet::call, require return type \
+							DispatchResultWithPostInfo";
+						return Err(syn::Error::new(method.sig.span(), msg));
+					}
+
+					let mut call_var_attrs: Vec<PalletCallVariantAttr> = take_item_attrs(&mut method.attrs)?;
+
+					if call_var_attrs.len() != 1 {
+						let msg = if call_var_attrs.len() == 0 {
+							"Invalid pallet::call, require weight attribute"
+						} else {
+							"Invalid pallet::call, to many weight attribute given"
+						};
+						return Err(syn::Error::new(method.sig.span(), msg));
+					}
+					let weight = call_var_attrs.pop().unwrap().weight;
+
+					let mut args = vec![];
+					for arg in method.sig.inputs.iter_mut().skip(1) {
+						if let syn::FnArg::Typed(arg) = arg {
+							let arg_attrs: Vec<PalletCallVariantArgAttr> = take_item_attrs(&mut arg.attrs)?;
+							if arg_attrs.len() > 1 {
+								let msg = "Invalid pallet::call, invalid multiple args";
+								return Err(syn::Error::new(arg.span(), msg));
+							}
+							args.push((!arg_attrs.is_empty(), arg.ty.clone()));
+						} else {
+							unreachable!("Only first argument can be receiver");
+						}
+					}
+
+					methods.push(CallVariantDef {
+						fn_: method.sig.ident.clone(),
+						weight,
+						args,
+					});
 				} else {
-					todo!();
+					let msg = "Invalid pallet::call, only method accepted";
+					return Err(syn::Error::new(impl_item.span(), msg));
 				}
 			}
 
@@ -158,6 +214,7 @@ impl syn::parse::Parse for ConstMetadataDef  {
 		input.parse::<syn::Token![<]>()?;
 		let type_ = input.parse::<syn::Type>()?;
 		input.parse::<syn::Token![>]>()?;
+		input.parse::<syn::Token![;]>()?;
 
 		Ok(Self { ident, type_ })
 	}
@@ -182,6 +239,11 @@ pub struct TraitDef {
 
 mod keyword {
 	syn::custom_keyword!(I);
+	syn::custom_keyword!(weight);
+	syn::custom_keyword!(compact);
+	syn::custom_keyword!(OriginFor);
+	syn::custom_keyword!(origin);
+	syn::custom_keyword!(DispatchResultWithPostInfo);
 	syn::custom_keyword!(Module);
 	syn::custom_keyword!(Call);
 	syn::custom_keyword!(call);
@@ -196,6 +258,7 @@ mod keyword {
 	syn::custom_keyword!(module_interface);
 }
 
+// TODO TODO: all those check must give hint about the wanted structure.
 pub struct CheckTraitDefGenerics;
 impl syn::parse::Parse for CheckTraitDefGenerics {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
@@ -204,6 +267,22 @@ impl syn::parse::Parse for CheckTraitDefGenerics {
 		input.parse::<keyword::Instance>()?;
 		input.parse::<syn::Token![=]>()?;
 		input.parse::<keyword::DefaultInstance>()?;
+		// TODO TODO: parse terminated.
+
+		Ok(Self)
+	}
+}
+
+pub struct CheckDispatchableFirstArg;
+impl syn::parse::Parse for CheckDispatchableFirstArg {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		input.parse::<keyword::origin>()?;
+		input.parse::<syn::Token![:]>()?;
+		input.parse::<keyword::OriginFor>()?;
+		input.parse::<syn::Token![<]>()?;
+		input.parse::<keyword::T>()?;
+		input.parse::<syn::Token![>]>()?;
+
 		// TODO TODO: parse terminated.
 
 		Ok(Self)
@@ -316,8 +395,8 @@ impl TraitDef {
 							consts_metadata.push(const_);
 						},
 						_ => {
-							let msg = "Invalid pallet::const in pallet::trait, expect type trait
-							item";
+							let msg = "Invalid pallet::const in pallet::trait, expect type trait \
+								item";
 							return Err(syn::Error::new(trait_item.span(), msg));
 						},
 					},
@@ -344,9 +423,10 @@ impl ModuleDef {
 	fn try_from(item: syn::Item) -> syn::Result<Self> {
 		if let syn::Item::Struct(item) = item {
 			syn::parse2::<keyword::Module>(item.ident.to_token_stream())?;
+
 			if !matches!(item.vis, syn::Visibility::Public(_)) {
 				let msg = "Invalid pallet::module, Module must be public";
-				return Err(syn::Error::new(item.vis.span(), msg));
+				return Err(syn::Error::new(item.span(), msg));
 			}
 
 			syn::parse2::<CheckStructDefGenerics>(item.generics.params.to_token_stream())?;
@@ -373,8 +453,8 @@ impl ModuleInterfaceDef {
 		if let syn::Item::Impl(item) = item {
 			let item_trait = &item.trait_.as_ref()
 				.ok_or_else(|| {
-					let msg = "Invalid pallet::module_interface, expect impl... ModuleInterface for
-						...";
+					let msg = "Invalid pallet::module_interface, expect impl... ModuleInterface \
+						for ...";
 					syn::Error::new(item.span(), msg)
 				})?.1;
 
@@ -433,6 +513,12 @@ impl MutItemAttrs for syn::TraitItem {
 	}
 }
 
+impl MutItemAttrs for Vec<syn::Attribute> {
+	fn mut_item_attrs(&mut self) -> &mut Vec<syn::Attribute> {
+		self
+	}
+}
+
 
 // start with pallet::
 pub enum PalletAttr {
@@ -444,17 +530,24 @@ pub enum PalletAttr {
 
 impl syn::parse::Parse for PalletAttr {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<syn::Ident>()?;
-		input.parse::<syn::Token![::]>()?;
+		input.parse::<syn::Token![#]>()?;
+		let content;
+		syn::bracketed!(content in input);
+		content.parse::<syn::Ident>()?;
+		content.parse::<syn::Token![::]>()?;
 
-		let lookahead = input.lookahead1();
+		let lookahead = content.lookahead1();
 		if lookahead.peek(keyword::trait_) { // TODO TODO: maybe `trait` is doable
+			content.parse::<keyword::trait_>()?;
 			Ok(PalletAttr::Trait)
 		} else if lookahead.peek(keyword::module) {
+			content.parse::<keyword::module>()?;
 			Ok(PalletAttr::Module)
 		} else if lookahead.peek(keyword::module_interface) {
+			content.parse::<keyword::module_interface>()?;
 			Ok(PalletAttr::ModuleInterface)
 		} else if lookahead.peek(keyword::call) {
+			content.parse::<keyword::call>()?;
 			Ok(PalletAttr::Call)
 		} else {
 			Err(lookahead.error())
@@ -462,7 +555,6 @@ impl syn::parse::Parse for PalletAttr {
 	}
 }
 
-// start with pallet::trait_::
 pub enum PalletTraitAttr {
 	Const(proc_macro2::Span),
 }
@@ -477,12 +569,62 @@ impl Spanned for PalletTraitAttr {
 
 impl syn::parse::Parse for PalletTraitAttr {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<syn::Ident>()?;
-		input.parse::<syn::Token![::]>()?;
+		input.parse::<syn::Token![#]>()?;
+		let content;
+		syn::bracketed!(content in input);
+		content.parse::<syn::Ident>()?;
+		content.parse::<syn::Token![::]>()?;
 
-		let lookahead = input.lookahead1();
+		let lookahead = content.lookahead1();
 		if lookahead.peek(keyword::const_) { // TODO TODO: maybe `const` is doable
-			Ok(PalletTraitAttr::Const(input.parse::<keyword::const_>()?.span()))
+			Ok(PalletTraitAttr::Const(content.parse::<keyword::const_>()?.span()))
+		} else {
+			Err(lookahead.error())
+		}
+	}
+}
+
+pub struct PalletCallVariantAttr {
+	weight: syn::Expr,
+}
+
+impl syn::parse::Parse for PalletCallVariantAttr {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		input.parse::<syn::Token![#]>()?;
+		let content;
+		syn::bracketed!(content in input);
+		content.parse::<syn::Ident>()?;
+		content.parse::<syn::Token![::]>()?;
+
+		let lookahead = content.lookahead1();
+		if lookahead.peek(keyword::weight) {
+			content.parse::<keyword::weight>()?;
+			content.parse::<syn::Token![=]>()?;
+
+			Ok(PalletCallVariantAttr {
+				weight: content.parse::<syn::Expr>()?,
+			})
+		} else {
+			Err(lookahead.error())
+		}
+	}
+}
+
+/// I.e. is_compact
+pub struct PalletCallVariantArgAttr;
+
+impl syn::parse::Parse for PalletCallVariantArgAttr {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		input.parse::<syn::Token![#]>()?;
+		let content;
+		syn::bracketed!(content in input);
+		content.parse::<syn::Ident>()?;
+		content.parse::<syn::Token![::]>()?;
+
+		let lookahead = content.lookahead1();
+		if lookahead.peek(keyword::compact) {
+			content.parse::<keyword::compact>()?;
+			Ok(PalletCallVariantArgAttr)
 		} else {
 			Err(lookahead.error())
 		}
@@ -597,5 +739,5 @@ pub fn pallet_from_item_mod(item: syn::ItemMod) -> syn::Result<proc_macro2::Toke
 
 	// for item in item.content.unwrap().1.iter() {
 	// }
-	unimplemented!();
+	todo!("expand");
 }
