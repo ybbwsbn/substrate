@@ -21,4 +21,12 @@ mod Pallet {
 		fn toto(origin: OriginFor<T>, #[pallet::compact] toto: u32) -> DispatchResultWithPostInfo {
 		}
 	}
+
+	#[pallet::error]
+	pub enum Error {
+		/// TOTO
+		toto,
+		/// TATA
+		tata
+	}
 }
