@@ -159,7 +159,7 @@ fn expand_event(def: &Def) -> proc_macro2::TokenStream {
 			$crate::codec::Decode,
 			$crate::RuntimeDebug,
 
-		#item_with_phantom_data
+		#item
 
 		impl<#event_impl_gen> From<#item_ident<#event_use_gen>> for () {
 			fn from(_: #item_ident<#event_use_gen>) -> () { () }

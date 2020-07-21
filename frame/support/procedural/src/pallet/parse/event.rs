@@ -30,7 +30,7 @@ impl EventDef {
 		}
 	}
 
-	pub fn event_impl_block_gen(&self) -> proc_macro2::TokenStream {
+	pub fn event_impl_gen(&self) -> proc_macro2::TokenStream {
 		if self.is_generic {
 			if self.has_instance {
 				quote::quote!(T: Trait<I>, I: Instance)
