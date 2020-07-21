@@ -12,7 +12,7 @@ use syn::spanned::Spanned;
 fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 	let item = &def.trait_.item;
 	let scrate = &def.scrate();
-	let impl_block_gen = &def.impl_block_generics();
+	let type_impl_gen = &def.impl_block_generics();
 	let type_decl_gen = &def.type_decl_generics();
 	let type_use_gen = &def.type_use_generics();
 
@@ -35,7 +35,7 @@ fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 					#scrate::sp_std::marker::PhantomData<(#type_use_gen)>
 				);
 
-				impl<#impl_block_gen> #scrate::dispatch::DefaultByte for
+				impl<#type_impl_gen> #scrate::dispatch::DefaultByte for
 					#default_byte_getter<#type_use_gen>
 				{
 					fn default_byte(&self) -> #scrate::sp_std::vec::Vec<u8> {
@@ -44,8 +44,8 @@ fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 					}
 				}
 
-				unsafe impl<#impl_block_gen> Send for $default_byte_getter<#type_use_gen> {}
-				unsafe impl<#impl_block_gen> Sync for $default_byte_getter<#type_use_gen> {}
+				unsafe impl<#type_impl_gen> Send for $default_byte_getter<#type_use_gen> {}
+				unsafe impl<#type_impl_gen> Sync for $default_byte_getter<#type_use_gen> {}
 
 				$crate::dispatch::ModuleConstantMetadata {
 					name: $crate::dispatch::DecodeDifferent::Encode(#type_str),
@@ -65,7 +65,7 @@ fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 		});
 
 	quote::quote!(
-		impl<#impl_block_gen> Module<#type_use_gen> {
+		impl<#type_impl_gen> Module<#type_use_gen> {
 
 			#[doc(hidden)]
 			pub fn module_constants_metadata()
@@ -79,6 +79,7 @@ fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 	)
 }
 
+// TODO TODO: maybe add derive for Clone Copy and else (as done by decl_module)
 fn expand_module(def: &Def) -> proc_macro2::TokenStream {
 	let item = &def.module.item;
 	quote::quote!(
@@ -104,8 +105,74 @@ fn expand_inherent(def: &Def) -> proc_macro2::TokenStream {
 	}
 }
 
+// TODO TODO: for each `format!(` check that space are correctly handled!!
+
 fn expand_event(def: &Def) -> proc_macro2::TokenStream {
-	todo!();
+	let event = if let Some(event) = &def.event {
+		event
+	} else {
+		return Default::default()
+	};
+
+	let mut item = event.item.clone();
+	let item_ident = &event.item.ident;
+	let scrate = &def.scrate();
+	let event_use_gen = &event.event_use_gen();
+	let event_impl_gen= &event.event_impl_gen();
+	let metadata = event.metadata.iter()
+		.map(|(ident, args, docs)| {
+			let name = format!("{}", ident);
+			quote::quote!(
+				#scrate::event::EventMetadata {
+					name: #scrate::event::DecodeDifferent::Encode(#name),
+					arguments: #scrate::event::DecodeDifferent::Encode(&[ #( #args )* ]),
+					documentation: $crate::event::DecodeDifferent::Encode(&[ #( #docs )* ]),
+				},
+			)
+		});
+
+	// Phantom data is added for generic event.
+	if event.is_generic {
+		let variant = syn::parse2(quote::quote!(
+			#[doc(hidden)]
+			#[codec(skip)]
+			__Ignore(
+				#scrate::sp_std::marker::PhantomData<(#event_use_gen)>,
+				#scrate::Never,
+			),
+		)).expect("Internal error: internally constructed variant should be valid");
+
+		// Push ignore variant at the end.
+		item.variants.push(variant);
+	}
+
+	// Codec is derived TODO TODO
+	// For Clone, PartialEq and Eq this must be that all type implement Parameter.
+	// Enforcing them is fine because anyway this should be doable with Codec
+	// Or just create one similar to Codec
+
+	quote::quote!(
+			// TODO TODO: derive Clone, PartialEq, Eq
+			// TODO TODO: Debug manually
+			Clone, PartialEq, Eq,
+			$crate::codec::Encode,
+			$crate::codec::Decode,
+			$crate::RuntimeDebug,
+
+		#item_with_phantom_data
+
+		impl<#event_impl_gen> From<#item_ident<#event_use_gen>> for () {
+			fn from(_: #item_ident<#event_use_gen>) -> () { () }
+		}
+
+		impl<#event_impl_gen> #item_ident<#event_use_gen> {
+			#[allow(dead_code)]
+			#[doc(hidden)]
+			pub fn metadata() -> &'static [#scrate::event::EventMetadata] {
+				&[ #( #metadata )* ]
+			}
+		}
+	)
 }
 
 fn expand_error(def: &Def) -> proc_macro2::TokenStream {
@@ -116,9 +183,103 @@ fn expand_error(def: &Def) -> proc_macro2::TokenStream {
 	};
 
 	let item = &error.item;
+	let item_ident = &error.item.ident;
+	let scrate = &def.scrate();
+	let type_impl_gen = &def.impl_block_generics();
+	let type_decl_gen = &def.type_decl_generics();
+	let type_use_gen = &def.type_use_generics();
+
+	let item_with_phantom_data = {
+		let mut i = item.clone();
+		let variant = syn::parse2(quote::quote!(
+			#[doc(hidden)]
+			__Ignore(
+				#scrate::sp_std::marker::PhantomData<(#type_use_gen)>,
+				#scrate::Never,
+			),
+		)).expect("Internal error: internally constructed variant should be valid");
+
+		i.variants.insert(0, variant);
+		i
+	};
+
+	let as_u8_matches = error.variants.iter()
+		.enumerate()
+		.map(|(i, (variant, _))| quote::quote!(Self::#variant => #i,));
+
+	let as_str_matches = error.variants.iter()
+		.map(|(variant, _)| {
+			let variant_str = format!("{}", variant);
+			quote::quote!(Self::#variant => #variant_str,)
+		});
+
+	let metadata = error.variants.iter()
+		.map(|(variant, doc)| {
+			let variant_str = format!("{}", variant);
+			quote::quote!(
+				#scrate::error::ErrorMetadata {
+					name: #scrate::error::DecodeDifferent::Encode(#variant_str),
+					documentation: #scrate::error::DecodeDifferent::Encode(&[ #( #doc )* ]),
+				}
+			)
+		});
 
 	quote::quote!(
 		#item
+
+		impl<#type_impl_gen> #scrate::sp_std::fmt::Debug for #item_ident<#type_use_gen> {
+			fn fmt(&self, f: &mut $crate::sp_std::fmt::Formatter<'_>)
+				-> $crate::sp_std::fmt::Result
+			{
+				f.write_str(self.as_str())
+			}
+		}
+
+		impl<#type_impl_gen> #item_ident<#type_use_gen> {
+			fn as_u8(&self) -> u8 {
+				match &self {
+					Self::__Ignore(_, _) => unreachable!("`__Ignore` can never be constructed"),
+					#( #as_u8_matches )*
+				}
+			}
+
+			fn as_str(&self) -> &'static str {
+				match &self {
+					Self::__Ignore(_, _) => unreachable!("`__Ignore` can never be constructed"),
+					#( #as_str_matches )*
+				}
+			}
+		}
+
+		impl<#type_impl_gen> From<#item_ident<#type_use_gen>> for &'static str {
+			fn from(err: #item_ident<#type_use_gen>) -> &'static str {
+				err.as_str()
+			}
+		}
+
+		impl<#type_impl_gen> From<#item_ident<#type_use_gen>>
+			for #scrate::sp_runtime::DispatchError
+		{
+			fn from(err: #item_ident<#type_use_gen>) -> Self {
+				let index = <
+					<T as #scrate::frame_system::Trait>::ModuleToIndex
+					as #scrate::traits::ModuleToIndex
+				>::module_to_index::<Module<#type_use_gen>>()
+					.expect("Every active module has an index in the runtime; qed") as u8;
+
+				#scrate::sp_runtime::DispatchError::Module {
+					index,
+					error: err.as_u8(),
+					message: Some(err.as_str()),
+				}
+			}
+		}
+
+		impl<#type_impl_gen> #scrate::error::ModuleErrorMetadata for #item_ident<#type_use_gen> {
+			fn metadata() -> &'static [#scrate::error::ErrorMetadata] {
+				&[ #( #metadata )* ]
+			}
+		}
 	)
 }
 
@@ -305,6 +466,30 @@ impl syn::parse::Parse for CheckDispatchableFirstArg {
 pub struct CheckStructDefGenerics;
 impl syn::parse::Parse for CheckStructDefGenerics {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		input.parse::<keyword::T>()?;
+		if input.peek(syn::Token![,]) {
+			input.parse::<syn::Token![,]>()?;
+			input.parse::<keyword::I>()?;
+			input.parse::<syn::Token![=]>()?;
+			input.parse::<keyword::DefaultInstance>()?;
+		}
+		// TODO TODO: parse terminated.
+
+		Ok(Self)
+	}
+}
+
+/// Check the syntax:
+/// * either `T`
+/// * or `T, I = DefaultInstance`
+/// * or nothing
+pub struct CheckTypeDefOptionalGenerics;
+impl syn::parse::Parse for CheckTypeDefOptionalGenerics {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		if input.is_empty() {
+			return Ok(Self)
+		}
+
 		input.parse::<keyword::T>()?;
 		if input.peek(syn::Token![,]) {
 			input.parse::<syn::Token![,]>()?;

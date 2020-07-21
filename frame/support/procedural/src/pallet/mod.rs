@@ -46,7 +46,7 @@ mod parse;
 /// 	}
 ///
 /// 	#[pallet::error] // expand metadata,
-/// 	pub enum Error {
+/// 	pub enum Error<T, I = DefaultInstance> {
 /// 		/// doc
 /// 		InsufficientProposersBalance,
 /// 	}

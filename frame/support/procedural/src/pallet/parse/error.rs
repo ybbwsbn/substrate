@@ -1,4 +1,5 @@
-use super::get_doc_literals;
+use super::{get_doc_literals, CheckStructDefGenerics};
+use quote::ToTokens;
 use syn::spanned::Spanned;
 
 /// This checks error declaration as a enum declaration with only variants without fields nor
@@ -6,8 +7,11 @@ use syn::spanned::Spanned;
 pub struct ErrorDef {
 	/// Full enum_ declaration.
 	pub item: syn::ItemEnum,
-	/// Variants ident and doc literals.
+	/// Variants ident and doc literals (ordered as declaration order)
 	pub variants: Vec<(syn::Ident, Vec<syn::Lit>)>,
+	/// Whether the error has been declared with instance or not, must be consistent with trait
+	/// declaration.
+	pub has_instance: bool,
 }
 
 impl ErrorDef {
@@ -17,10 +21,10 @@ impl ErrorDef {
 				let msg = "Invalid pallet::error, `Error` must be public";
 				return Err(syn::Error::new(item.span(), msg));
 			}
-			if item.generics.params.len() != 0 {
-				let msg = "Invalid pallet::error, unexpected generic";
-				return Err(syn::Error::new(item.generics.params.first().unwrap().span(), msg));
-			}
+
+			syn::parse2::<CheckStructDefGenerics>(item.generics.params.to_token_stream())?;
+			let has_instance = item.generics.params.len() == 2;
+
 			if item.generics.where_clause.is_some() {
 				let msg = "Invalid pallet::error, unexpected where clause";
 				return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
@@ -46,6 +50,7 @@ impl ErrorDef {
 			Ok(ErrorDef {
 				item,
 				variants,
+				has_instance,
 			})
 		} else {
 			Err(syn::Error::new(item.span(), "Invalid pallet::error, expect item enum"))

@@ -297,3 +297,32 @@ pub fn construct_runtime(input: TokenStream) -> TokenStream {
 pub fn pallet(attr: TokenStream, item: TokenStream) -> TokenStream {
 	pallet::pallet(attr, item)
 }
+
+#[proc_macro_derive(CloneBoundTypes)]
+pub fn derive_clone_bound_type(item: TokenStream) -> TokenStream {
+	let mut input: DeriveInput = match syn::parse(input) {
+		Ok(input) => input,
+		Err(e) => return e.to_compile_error().into(),
+	};
+	todo!();
+}
+
+
+#[proc_macro_derive(PartialEqBoundTypes)]
+pub fn derive_partial_eq_bound_type(item: TokenStream) -> TokenStream {
+	let mut input: DeriveInput = match syn::parse(input) {
+		Ok(input) => input,
+		Err(e) => return e.to_compile_error().into(),
+	};
+	todo!();
+}
+
+#[proc_macro_derive(EqBoundTypes)]
+pub fn derive_eq_bound_type(item: TokenStream) -> TokenStream {
+	let mut input: DeriveInput = match syn::parse(input) {
+		Ok(input) => input,
+		Err(e) => return e.to_compile_error().into(),
+	};
+	todo!();
+}
+
