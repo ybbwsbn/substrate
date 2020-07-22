@@ -1,11 +1,13 @@
 use syn::spanned::Spanned;
 
 pub struct ModuleInterfaceDef {
+	/// The impl bock that implement ModuleInterface for Module.
 	pub item: syn::ItemImpl,
+	/// A set of usage of instance, must be check for consistency with trait.
+	pub instances: Vec<super::InstanceUsage>,
 }
 
 impl ModuleInterfaceDef {
-	// Check has one or two generics named T or T, I and default instance is set
 	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
 		if let syn::Item::Impl(item) = item {
 			let item_trait = &item.trait_.as_ref()
@@ -22,8 +24,10 @@ impl ModuleInterfaceDef {
 				return Err(syn::Error::new(item_trait.span(), msg));
 			}
 
-			// TODO TODO: we can check: it is for Module with correct generics, and impl_bounds has correct generics
-			Ok(Self { item })
+			let mut instances = vec![];
+			instances.push(super::check_module_usage(&item.self_ty)?);
+
+			Ok(Self { item, instances })
 		} else {
 			let msg = "Invalid pallet::module_interface, expect item impl";
 			Err(syn::Error::new(item.span(), msg))

@@ -10,8 +10,8 @@ pub struct EventDef {
 	pub item: syn::ItemEnum,
 	/// Event metadatas: `(name, args, docs)`.
 	pub metadata: Vec<(syn::Ident, Vec<syn::Ident>, Vec<syn::Lit>)>,
-	/// Use of instance, must be check for consistence with trait definition
-	pub instances: Vec<Option<super::keyword::I>>,
+	/// A set of usage of instance, must be check for consistency with trait.
+	pub instances: Vec<super::InstanceUsage>,
 	/// If event is declared with instance.
 	pub has_instance: bool,
 	pub is_generic: bool,
@@ -39,74 +39,6 @@ impl EventDef {
 			}
 		} else {
 			quote::quote!()
-		}
-	}
-}
-
-impl EventDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
-		if let syn::Item::Enum(mut item) = item {
-			let mut event_attrs: Vec<PalletEventAttr> = take_item_attrs(&mut item.attrs)?;
-			if event_attrs.len() > 1 {
-				let msg = "Invalid pallet::metadata, expected only one attribute \
-					`pallet::metadata`";
-				return Err(syn::Error::new(event_attrs[1].span, msg));
-			}
-			let metadata = event_attrs.pop().map_or(vec![], |attr| attr.metadata);
-
-			if !matches!(item.vis, syn::Visibility::Public(_)) {
-				let msg = "Invalid pallet::event, `Error` must be public";
-				return Err(syn::Error::new(item.span(), msg));
-			}
-			if item.generics.where_clause.is_some() {
-				let msg = "Invalid pallet::event, unexpected where clause";
-				return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
-			}
-
-			let mut instances = vec![];
-			instances.push(super::check_type_def_optional_generics(&item.generics, item.span())?);
-
-			let has_instance = item.generics.params.len() == 2;
-			let is_generic = item.generics.params.len() > 0;
-
-			let metadata = item.variants.iter()
-				.map(|variant| {
-					let name = variant.ident.clone();
-					let docs = get_doc_literals(&variant.attrs);
-					let args = variant.fields.iter()
-						.map(|field| {
-							metadata.iter().find(|m| m.0 == field.ty)
-								.map(|m| m.1.clone())
-								.or_else(|| {
-									if let syn::Type::Path(p) = &field.ty {
-										p.path.segments.last().map(|s| s.ident.clone())
-									} else {
-										None
-									}
-								})
-								.ok_or_else(|| {
-									let msg = "Invalid pallet::event, type can't be parsed for \
-										metadata, must be either a path type (and thus last \
-										segments ident is metadata) or match a type in the \
-										metadata attributes";
-									syn::Error::new(field.span(), msg)
-								})
-						})
-						.collect::<syn::Result<_>>()?;
-
-					Ok((name, args, docs))
-				})
-				.collect::<syn::Result<_>>()?;
-
-			Ok(EventDef {
-				item,
-				metadata,
-				instances,
-				has_instance,
-				is_generic,
-			})
-		} else {
-			Err(syn::Error::new(item.span(), "Invalid pallet::event, expect item enum"))
 		}
 	}
 }
@@ -150,3 +82,74 @@ impl syn::parse::Parse for PalletEventAttr {
 	}
 }
 
+impl EventDef {
+	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
+		let mut item = if let syn::Item::Enum(item) = item {
+			item
+		} else {
+			return Err(syn::Error::new(item.span(), "Invalid pallet::event, expect item enum"))
+		};
+
+		let mut event_attrs: Vec<PalletEventAttr> = take_item_attrs(&mut item.attrs)?;
+		if event_attrs.len() > 1 {
+			let msg = "Invalid pallet::metadata, expected only one attribute \
+				`pallet::metadata`";
+			return Err(syn::Error::new(event_attrs[1].span, msg));
+		}
+		let metadata = event_attrs.pop().map_or(vec![], |attr| attr.metadata);
+
+		if !matches!(item.vis, syn::Visibility::Public(_)) {
+			let msg = "Invalid pallet::event, `Error` must be public";
+			return Err(syn::Error::new(item.span(), msg));
+		}
+		if item.generics.where_clause.is_some() {
+			let msg = "Invalid pallet::event, unexpected where clause";
+			return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
+		}
+
+		let has_instance = item.generics.params.len() == 2;
+		let is_generic = item.generics.params.len() > 0;
+
+		let mut instances = vec![];
+		if let Some(u) = super::check_type_def_optional_generics(&item.generics, item.span())? {
+			instances.push(u);
+		}
+
+		let metadata = item.variants.iter()
+			.map(|variant| {
+				let name = variant.ident.clone();
+				let docs = get_doc_literals(&variant.attrs);
+				let args = variant.fields.iter()
+					.map(|field| {
+						metadata.iter().find(|m| m.0 == field.ty)
+							.map(|m| m.1.clone())
+							.or_else(|| {
+								if let syn::Type::Path(p) = &field.ty {
+									p.path.segments.last().map(|s| s.ident.clone())
+								} else {
+									None
+								}
+							})
+							.ok_or_else(|| {
+								let msg = "Invalid pallet::event, type can't be parsed for \
+									metadata, must be either a path type (and thus last \
+									segments ident is metadata) or match a type in the \
+									metadata attributes";
+								syn::Error::new(field.span(), msg)
+							})
+					})
+					.collect::<syn::Result<_>>()?;
+
+				Ok((name, args, docs))
+			})
+			.collect::<syn::Result<_>>()?;
+
+		Ok(EventDef {
+			item,
+			metadata,
+			instances,
+			has_instance,
+			is_generic,
+		})
+	}
+}

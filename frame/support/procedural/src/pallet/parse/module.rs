@@ -8,12 +8,11 @@ mod keyword {
 
 pub struct ModuleDef {
 	pub item: syn::ItemStruct,
-	/// Use of instance, must be check for consistency with trait declaration.
-	pub instances: Vec<Option<super::keyword::I>>,
+	/// A set of usage of instance, must be check for consistency with trait.
+	pub instances: Vec<super::InstanceUsage>,
 }
 
 impl ModuleDef {
-	// Check has one or two generics named T or T, I and default instance is set
 	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
 		let item = if let syn::Item::Struct(item) = item {
 			item
@@ -28,8 +27,10 @@ impl ModuleDef {
 			let msg = "Invalid pallet::module, Module must be public";
 			return Err(syn::Error::new(item.span(), msg));
 		}
-
-		// TODO TODO: assert no where clause ?
+		if item.generics.where_clause.is_some() {
+			let msg = "Invalid pallet::module, where clause not supported on Module declaration";
+			return Err(syn::Error::new(item.generics.where_clause.span(), msg));
+		}
 
 		let mut instances = vec![];
 		instances.push(super::check_type_def_generics(&item.generics, item.span())?);

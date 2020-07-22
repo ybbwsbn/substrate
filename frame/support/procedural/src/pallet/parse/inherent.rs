@@ -1,8 +1,10 @@
 use syn::spanned::Spanned;
 
 pub struct InherentDef {
+	/// The impl block that implement ProvideInherent.
 	pub item: syn::ItemImpl,
-	// TODO TODO: has_instance
+	/// A set of usage of instance, must be check for consistency with trait.
+	pub instances: Vec<super::InstanceUsage>,
 }
 
 impl InherentDef {
@@ -23,9 +25,10 @@ impl InherentDef {
 				return Err(syn::Error::new(item.span(), msg));
 			}
 
-			// TODO TODO: maybe check module generics
+			let mut instances = vec![];
+			instances.push(super::check_module_usage(&item.self_ty)?);
 
-			Ok(InherentDef { item })
+			Ok(InherentDef { item, instances })
 		} else {
 			Err(syn::Error::new(item.span(), "Invalid pallet::inherent, expect item impl"))
 		}

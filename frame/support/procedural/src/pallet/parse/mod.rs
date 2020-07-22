@@ -12,6 +12,48 @@ use quote::ToTokens;
 
 // TODO TODO: maybe check reserved function or just warn ?
 
+pub fn def_check(def: &Def) -> syn::Result<()> {
+	let mut instances = vec![];
+	instances.extend_from_slice(&def.call.instances[..]);
+	instances.extend_from_slice(&def.module.instances[..]);
+	instances.extend_from_slice(&def.module_interface.instances[..]);
+	if let Some(event) = &def.event {
+		instances.extend_from_slice(&event.instances[..]);
+	}
+	if let Some(error) = &def.error {
+		instances.extend_from_slice(&error.instances[..]);
+	}
+	if let Some(inherent) = &def.inherent {
+		instances.extend_from_slice(&inherent.instances[..]);
+	}
+	if let Some(origin) = &def.origin {
+		instances.extend_from_slice(&origin.instances[..]);
+	}
+
+	let mut errors = instances.into_iter()
+		.filter_map(|instances| {
+			if instances.has_instance == def.trait_.has_instance {
+				return None
+			}
+			let msg = if def.trait_.has_instance {
+				"Invalid generic declaration, trait is defined with instance but generic use none"
+			} else {
+				"Invalid generic declaration, trait is defined without instance but generic use \
+					some"
+			};
+			Some(syn::Error::new(instances.span, msg))
+		});
+
+	if let Some(mut first_error) = errors.next() {
+		for error in errors {
+			first_error.combine(error)
+		}
+		Err(first_error)
+	} else {
+		Ok(())
+	}
+}
+
 pub fn expand(def: &Def) -> proc_macro2::TokenStream {
 	let trait_ = expand_trait_(def);
 	let module = expand_module(def);
@@ -643,6 +685,12 @@ mod keyword {
 	syn::custom_keyword!(error);
 }
 
+#[derive(Clone)]
+pub struct InstanceUsage {
+	has_instance: bool,
+	span: proc_macro2::Span,
+}
+
 /// Check the syntax: `I: Instance = DefaultInstance`
 ///
 /// `span` is used in case generics is empty (empty generics has span == call_site).
@@ -687,21 +735,26 @@ fn check_trait_def_generics(
 fn check_type_def_generics(
 	gen: &syn::Generics,
 	span: proc_macro2::Span,
-) -> syn::Result<Option<keyword::I>> {
+) -> syn::Result<InstanceUsage> {
 	let expected = "expect `T` or `T, I = DefaultInstance`";
-	pub struct CheckTypeDefGenerics(Option<keyword::I>);
+	pub struct CheckTypeDefGenerics(InstanceUsage);
 	impl syn::parse::Parse for CheckTypeDefGenerics {
 		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-			let mut instance = None;
+			let mut instance_usage = InstanceUsage {
+				has_instance: false,
+				span: input.span(),
+			};
+
 			input.parse::<keyword::T>()?;
 			if input.peek(syn::Token![,]) {
+				instance_usage.has_instance = true;
 				input.parse::<syn::Token![,]>()?;
-				instance = Some(input.parse::<keyword::I>()?);
+				input.parse::<keyword::I>()?;
 				input.parse::<syn::Token![=]>()?;
 				input.parse::<keyword::DefaultInstance>()?;
 			}
 
-			Ok(Self(instance))
+			Ok(Self(instance_usage))
 		}
 	}
 
@@ -727,25 +780,30 @@ fn check_type_def_generics(
 fn check_type_def_optional_generics(
 	gen: &syn::Generics,
 	span: proc_macro2::Span,
-) -> syn::Result<Option<keyword::I>> {
+) -> syn::Result<Option<InstanceUsage>> {
 	let expected = "expect `` or `T` or `T, I = DefaultInstance`";
-	pub struct CheckTypeDefOptionalGenerics(Option<keyword::I>);
+	pub struct CheckTypeDefOptionalGenerics(Option<InstanceUsage>);
 	impl syn::parse::Parse for CheckTypeDefOptionalGenerics {
 		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-			let mut instance = None;
 			if input.is_empty() {
-				return Ok(Self(instance))
+				return Ok(Self(None))
 			}
+
+			let mut instance_usage = InstanceUsage {
+				span: input.span(),
+				has_instance: false,
+			};
 
 			input.parse::<keyword::T>()?;
 			if input.peek(syn::Token![,]) {
+				instance_usage.has_instance = true;
 				input.parse::<syn::Token![,]>()?;
-				instance = Some(input.parse::<keyword::I>()?);
+				input.parse::<keyword::I>()?;
 				input.parse::<syn::Token![=]>()?;
 				input.parse::<keyword::DefaultInstance>()?;
 			}
 
-			Ok(Self(instance))
+			Ok(Self(Some(instance_usage)))
 		}
 	}
 
@@ -794,22 +852,27 @@ fn check_dispatchable_first_arg(arg: &syn::FnArg) -> syn::Result<()> {
 /// * or `Module<T, I>`
 ///
 /// return the instance if found.
-fn check_module_usage(type_: &Box<syn::Type>) -> syn::Result<Option<keyword::I>> {
+fn check_module_usage(type_: &Box<syn::Type>) -> syn::Result<InstanceUsage> {
 	let expected = "expect `Module<T>` or `Module<T, I>`";
-	pub struct CheckModuleUseType(Option<keyword::I>);
+	pub struct CheckModuleUseType(InstanceUsage);
 	impl syn::parse::Parse for CheckModuleUseType {
 		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-			let mut instance = None;
+			let mut instance_usage = InstanceUsage {
+				span: input.span(),
+				has_instance: false,
+			};
+
 			input.parse::<keyword::Module>()?;
 			input.parse::<syn::Token![<]>()?;
 			input.parse::<keyword::T>()?;
 			if input.peek(syn::Token![,]) {
+				instance_usage.has_instance = true;
 				input.parse::<syn::Token![,]>()?;
-				instance = Some(input.parse::<keyword::I>()?);
+				input.parse::<keyword::I>()?;
 			}
 			input.parse::<syn::Token![>]>()?;
 
-			Ok(Self(instance))
+			Ok(Self(instance_usage))
 		}
 	}
 
@@ -834,18 +897,23 @@ fn check_module_usage(type_: &Box<syn::Type>) -> syn::Result<Option<keyword::I>>
 fn check_impl_generics(
 	gen: &syn::Generics,
 	span: proc_macro2::Span
-) -> syn::Result<Option<keyword::I>> {
+) -> syn::Result<InstanceUsage> {
 	let expected = "expect `T: Trait` or `T: Trait<I>, I: Instance`";
-	pub struct CheckImplGenerics(Option<keyword::I>);
+	pub struct CheckImplGenerics(InstanceUsage);
 	impl syn::parse::Parse for CheckImplGenerics {
 		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-			let mut instance = None;
+			let mut instance_usage = InstanceUsage {
+				span: input.span(),
+				has_instance: false,
+			};
+
 			input.parse::<keyword::T>()?;
 			input.parse::<syn::Token![:]>()?;
 			input.parse::<keyword::Trait>()?;
 			if input.peek(syn::Token![<]) {
+				instance_usage.has_instance = true;
 				input.parse::<syn::Token![<]>()?;
-				instance = Some(input.parse::<keyword::I>()?);
+				input.parse::<keyword::I>()?;
 				input.parse::<syn::Token![>]>()?;
 				input.parse::<syn::Token![,]>()?;
 				input.parse::<keyword::I>()?;
@@ -853,7 +921,7 @@ fn check_impl_generics(
 				input.parse::<keyword::Instance>()?;
 			}
 
-			Ok(Self(instance))
+			Ok(Self(instance_usage))
 		}
 	}
 

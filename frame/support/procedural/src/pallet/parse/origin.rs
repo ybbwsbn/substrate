@@ -4,10 +4,14 @@ use syn::spanned::Spanned;
 /// * `type Origin`
 /// * `struct Origin`
 /// * `enum Origin`
+///
+/// type generics can only be nothing or `T` or `T, I`
 pub struct OriginDef {
 	pub item: syn::Item,
-	pub generics: syn::Generics, // TODO TODO: can be replaced to is_generic
-	// TODO TODO: has_instance
+	pub has_instance: bool,
+	pub is_generic: bool,
+	/// A set of usage of instance, must be check for consistency with trait.
+	pub instances: Vec<super::InstanceUsage>,
 }
 
 impl OriginDef {
@@ -23,6 +27,14 @@ impl OriginDef {
 			},
 		};
 
+		let has_instance = generics.params.len() == 2;
+		let is_generic = generics.params.len() > 0;
+
+		let mut instances = vec![];
+		if let Some(u) = super::check_type_def_optional_generics(&generics, item.span())? {
+			instances.push(u);
+		}
+
 		if !matches!(vis, syn::Visibility::Public(_)) {
 			let msg = "Invalid pallet::origin, Origin must be public";
 			return Err(syn::Error::new(item_span, msg));
@@ -35,6 +47,11 @@ impl OriginDef {
 
 		// TODO TODO: check instance has default and consistent
 
-		Ok(OriginDef { generics: generics.clone(), item })
+		Ok(OriginDef {
+			item,
+			has_instance,
+			is_generic,
+			instances,
+		})
 	}
 }

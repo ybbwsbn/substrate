@@ -13,8 +13,8 @@ mod keyword {
 
 /// Definition of dispatchables typically `impl<T: Trait> Call for Module<T> { ... }`
 pub struct CallDef {
-	/// A set of optional usage of instance, must be check for consistency with trait.
-	pub instances: Vec<Option<super::keyword::I>>,
+	/// A set of usage of instance, must be check for consistency with trait.
+	pub instances: Vec<super::InstanceUsage>,
 	/// The overal impl item.
 	pub item: syn::ItemImpl,
 	/// Information on methods (used for expansion).

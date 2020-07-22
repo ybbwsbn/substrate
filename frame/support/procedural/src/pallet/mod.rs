@@ -101,5 +101,6 @@ pub fn pallet(_attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> 
 
 pub fn pallet_from_item_mod(item: syn::ItemMod) -> syn::Result<proc_macro2::TokenStream> {
 	let def = parse::Def::try_from(item)?;
+	parse::def_check(&def)?;
 	Ok(parse::expand(&def))
 }

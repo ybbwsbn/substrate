@@ -8,50 +8,51 @@ pub struct ErrorDef {
 	pub item: syn::ItemEnum,
 	/// Variants ident and doc literals (ordered as declaration order)
 	pub variants: Vec<(syn::Ident, Vec<syn::Lit>)>,
-	/// Use of instance, must be check for consistency with trait declaration.
-	pub instances: Vec<Option<super::keyword::I>>,
+	/// A set of usage of instance, must be check for consistency with trait.
+	pub instances: Vec<super::InstanceUsage>,
 }
 
 impl ErrorDef {
 	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
-		if let syn::Item::Enum(item) = item {
-			if !matches!(item.vis, syn::Visibility::Public(_)) {
-				let msg = "Invalid pallet::error, `Error` must be public";
-				return Err(syn::Error::new(item.span(), msg));
-			}
-
-			let mut instances = vec![];
-			instances.push(super::check_type_def_generics(&item.generics, item.span())?);
-
-			if item.generics.where_clause.is_some() {
-				let msg = "Invalid pallet::error, unexpected where clause";
-				return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
-			}
-
-			let variants = item.variants.iter()
-				.map(|variant| {
-					if !matches!(variant.fields, syn::Fields::Unit) {
-						let msg = "Invalid pallet::error, unexpected fields, must be `Unit`";
-						return Err(syn::Error::new(variant.fields.span(), msg));
-					}
-					if variant.discriminant.is_some() {
-						let msg = "Invalid pallet::error, unexpected discriminant, discriminant \
-							are not supported";
-						let span = variant.discriminant.as_ref().unwrap().0.span();
-						return Err(syn::Error::new(span, msg));
-					}
-
-					Ok((variant.ident.clone(), get_doc_literals(&variant.attrs)))
-				})
-				.collect::<Result<_, _>>()?;
-
-			Ok(ErrorDef {
-				item,
-				variants,
-				instances,
-			})
+		let item = if let syn::Item::Enum(item) = item {
+			item
 		} else {
-			Err(syn::Error::new(item.span(), "Invalid pallet::error, expect item enum"))
+			return Err(syn::Error::new(item.span(), "Invalid pallet::error, expect item enum"));
+		};
+		if !matches!(item.vis, syn::Visibility::Public(_)) {
+			let msg = "Invalid pallet::error, `Error` must be public";
+			return Err(syn::Error::new(item.span(), msg));
 		}
+
+		let mut instances = vec![];
+		instances.push(super::check_type_def_generics(&item.generics, item.span())?);
+
+		if item.generics.where_clause.is_some() {
+			let msg = "Invalid pallet::error, unexpected where clause";
+			return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
+		}
+
+		let variants = item.variants.iter()
+			.map(|variant| {
+				if !matches!(variant.fields, syn::Fields::Unit) {
+					let msg = "Invalid pallet::error, unexpected fields, must be `Unit`";
+					return Err(syn::Error::new(variant.fields.span(), msg));
+				}
+				if variant.discriminant.is_some() {
+					let msg = "Invalid pallet::error, unexpected discriminant, discriminant \
+						are not supported";
+					let span = variant.discriminant.as_ref().unwrap().0.span();
+					return Err(syn::Error::new(span, msg));
+				}
+
+				Ok((variant.ident.clone(), get_doc_literals(&variant.attrs)))
+			})
+			.collect::<Result<_, _>>()?;
+
+		Ok(ErrorDef {
+			item,
+			variants,
+			instances,
+		})
 	}
 }
