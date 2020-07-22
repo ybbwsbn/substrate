@@ -1,5 +1,4 @@
-use super::{take_item_attrs, CheckTypeDefOptionalGenerics, get_doc_literals};
-use quote::ToTokens;
+use super::{take_item_attrs, get_doc_literals};
 use syn::spanned::Spanned;
 
 /// List of additional token to be used for parsing.
@@ -11,8 +10,9 @@ pub struct EventDef {
 	pub item: syn::ItemEnum,
 	/// Event metadatas: `(name, args, docs)`.
 	pub metadata: Vec<(syn::Ident, Vec<syn::Ident>, Vec<syn::Lit>)>,
-	/// Weither event is declared with instance,
-	/// if trait is instantiable and event is generic then event must be declared with instance.
+	/// Use of instance, must be check for consistence with trait definition
+	pub instances: Vec<Option<super::keyword::I>>,
+	/// If event is declared with instance.
 	pub has_instance: bool,
 	pub is_generic: bool,
 }
@@ -63,7 +63,9 @@ impl EventDef {
 				return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
 			}
 
-			syn::parse2::<CheckTypeDefOptionalGenerics>(item.generics.params.to_token_stream())?;
+			let mut instances = vec![];
+			instances.push(super::check_type_def_optional_generics(&item.generics, item.span())?);
+
 			let has_instance = item.generics.params.len() == 2;
 			let is_generic = item.generics.params.len() > 0;
 
@@ -99,6 +101,7 @@ impl EventDef {
 			Ok(EventDef {
 				item,
 				metadata,
+				instances,
 				has_instance,
 				is_generic,
 			})

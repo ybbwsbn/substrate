@@ -81,7 +81,7 @@ pub use self::dispatch::{Parameter, Callable, IsSubType};
 pub use sp_runtime::{self, ConsensusEngineId, print, traits::Printable};
 
 /// A type that cannot be instantiated.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Never {}
 
 /// Create new implementations of the [`Get`](crate::traits::Get) trait.
@@ -267,7 +267,10 @@ macro_rules! ord_parameter_types {
 }
 
 #[doc(inline)]
-pub use frame_support_procedural::{decl_storage, construct_runtime};
+pub use frame_support_procedural::{
+	decl_storage, construct_runtime, DebugBoundTypes, DebugStripped, CloneBoundTypes, EqBoundTypes,
+	PartialEqBoundTypes, pallet,
+};
 
 /// Return Err of the expression: `return Err($expression);`.
 ///

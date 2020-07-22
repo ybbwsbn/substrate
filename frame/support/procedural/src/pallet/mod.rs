@@ -15,10 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use quote::ToTokens;
-use syn::spanned::Spanned;
 mod parse;
-
 
 ///#[support2::pallet]
 /// ```nocompile
@@ -103,38 +100,6 @@ pub fn pallet(_attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> 
 }
 
 pub fn pallet_from_item_mod(item: syn::ItemMod) -> syn::Result<proc_macro2::TokenStream> {
-	let _def = parse::Def::try_from(item)?;
-	// // TODO TODO: search for:
-	// // * trait -> const metadata
-	// // * module -> implement stuff on it
-	// // * call -> call enum
-	// // * error -> error metadata
-	// // * event -> event metadata
-
-	// // TODO TODO: for decl_event we can easily implement a good derive just by assigning where
-	// // clause to each field
-	// // Trait is just read and generate const_metadata
-	// let trait_item = ();
-	// // Trait is just read or modified to add phantomdata, see with IDE
-	// let module_item = ();
-	// // genesis is just read and generate maybe something for AutoConstructRuntime
-	// let genesis_config_item = ();
-	// // Derive manually Clone, Eq and PartialEq same as call or same as Encode/Decode
-	// // generate metadata and associate to module.
-	// // Also define deposit_event
-	// // Check that overarching associated type Event in trait exists
-	// let event_item = ();
-	// // Add some variant and generate metadata and associate to Module
-	// let error_item = ();
-	// // Call is expanded!
-	// let call_item = ();
-	// // Item is just read or modified to add phantomdata, see with IDE
-	// // And generate StoragePrefix
-	// let store_decl_item = ();
-	// // Trait is just read and Generate metadata
-	// let store_impl_item = ();
-
-	// for item in item.content.unwrap().1.iter() {
-	// }
-	todo!("expand");
+	let def = parse::Def::try_from(item)?;
+	Ok(parse::expand(&def))
 }

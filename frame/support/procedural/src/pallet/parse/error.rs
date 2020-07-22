@@ -1,5 +1,4 @@
-use super::{get_doc_literals, CheckStructDefGenerics};
-use quote::ToTokens;
+use super::get_doc_literals;
 use syn::spanned::Spanned;
 
 /// This checks error declaration as a enum declaration with only variants without fields nor
@@ -9,9 +8,8 @@ pub struct ErrorDef {
 	pub item: syn::ItemEnum,
 	/// Variants ident and doc literals (ordered as declaration order)
 	pub variants: Vec<(syn::Ident, Vec<syn::Lit>)>,
-	/// Whether the error has been declared with instance or not, must be consistent with trait
-	/// declaration.
-	pub has_instance: bool,
+	/// Use of instance, must be check for consistency with trait declaration.
+	pub instances: Vec<Option<super::keyword::I>>,
 }
 
 impl ErrorDef {
@@ -22,8 +20,8 @@ impl ErrorDef {
 				return Err(syn::Error::new(item.span(), msg));
 			}
 
-			syn::parse2::<CheckStructDefGenerics>(item.generics.params.to_token_stream())?;
-			let has_instance = item.generics.params.len() == 2;
+			let mut instances = vec![];
+			instances.push(super::check_type_def_generics(&item.generics, item.span())?);
 
 			if item.generics.where_clause.is_some() {
 				let msg = "Invalid pallet::error, unexpected where clause";
@@ -50,7 +48,7 @@ impl ErrorDef {
 			Ok(ErrorDef {
 				item,
 				variants,
-				has_instance,
+				instances,
 			})
 		} else {
 			Err(syn::Error::new(item.span(), "Invalid pallet::error, expect item enum"))

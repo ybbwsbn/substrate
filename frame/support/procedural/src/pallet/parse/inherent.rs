@@ -7,7 +7,7 @@ pub struct InherentDef {
 
 impl InherentDef {
 	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
-		if let syn::Item::Impl(mut item) = item {
+		if let syn::Item::Impl(item) = item {
 			if item.trait_.is_none() {
 				let msg = "Invalid pallet::inherent, expect impl.. ProvideInherent for Module..";
 				return Err(syn::Error::new(item.span(), msg));

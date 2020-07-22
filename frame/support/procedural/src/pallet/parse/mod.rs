@@ -8,11 +8,39 @@ mod inherent;
 mod event;
 
 use syn::spanned::Spanned;
+use quote::ToTokens;
+
+// TODO TODO: maybe check reserved function or just warn ?
+
+pub fn expand(def: &Def) -> proc_macro2::TokenStream {
+	let trait_ = expand_trait_(def);
+	let module = expand_module(def);
+	let module_interface = expand_module_interface(def);
+	let call = expand_call(def);
+	let error = expand_error(def);
+	let origin = expand_origin(def);
+	let inherent = expand_inherent(def);
+	let event = expand_event(def);
+	let other_items = &def.other_items;
+
+	quote::quote!(
+		#trait_
+		#module
+		#module_interface
+		#call
+		#error
+		#origin
+		#inherent
+		#event
+		#( #other_items )*
+	)
+}
 
 fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 	let item = &def.trait_.item;
 	let scrate = &def.scrate();
-	let type_impl_gen = &def.impl_block_generics();
+	let type_impl_gen = &def.type_impl_generics();
+	let type_impl_static_gen = &def.type_impl_static_generics();
 	let type_decl_gen = &def.type_decl_generics();
 	let type_use_gen = &def.type_use_generics();
 
@@ -44,20 +72,20 @@ fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 					}
 				}
 
-				unsafe impl<#type_impl_gen> Send for $default_byte_getter<#type_use_gen> {}
-				unsafe impl<#type_impl_gen> Sync for $default_byte_getter<#type_use_gen> {}
+				unsafe impl<#type_impl_gen> Send for #default_byte_getter<#type_use_gen> {}
+				unsafe impl<#type_impl_gen> Sync for #default_byte_getter<#type_use_gen> {}
 
-				$crate::dispatch::ModuleConstantMetadata {
-					name: $crate::dispatch::DecodeDifferent::Encode(#type_str),
-					ty: $crate::dispatch::DecodeDifferent::Encode(#ident_str),
-					value: $crate::dispatch::DecodeDifferent::Encode(
-						$crate::dispatch::DefaultByteGetter(
-							&$default_byte_getter::<#type_use_gen>(
-								$crate::sp_std::marker::PhantomData
+				#scrate::dispatch::ModuleConstantMetadata {
+					name: #scrate::dispatch::DecodeDifferent::Encode(#type_str),
+					ty: #scrate::dispatch::DecodeDifferent::Encode(#ident_str),
+					value: #scrate::dispatch::DecodeDifferent::Encode(
+						#scrate::dispatch::DefaultByteGetter(
+							&#default_byte_getter::<#type_use_gen>(
+								#scrate::sp_std::marker::PhantomData
 							)
 						)
 					),
-					documentation: $crate::dispatch::DecodeDifferent::Encode(
+					documentation: #scrate::dispatch::DecodeDifferent::Encode(
 						&[ #( #doc )* ]
 					),
 				}
@@ -65,7 +93,7 @@ fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 		});
 
 	quote::quote!(
-		impl<#type_impl_gen> Module<#type_use_gen> {
+		impl<#type_impl_static_gen> Module<#type_use_gen> {
 
 			#[doc(hidden)]
 			pub fn module_constants_metadata()
@@ -84,6 +112,15 @@ fn expand_module(def: &Def) -> proc_macro2::TokenStream {
 	let item = &def.module.item;
 	quote::quote!(
 		#item
+
+		// TODO TODO:
+		// impl<$trait_instance: $trait_name $(<I>, $instance: $instantiable)?> $crate::dispatch::ModuleErrorMetadata
+		// 	for $mod_type<$trait_instance $(, $instance)?> where $( $other_where_bounds )*
+		// {
+		// 	fn metadata() -> &'static [$crate::dispatch::ErrorMetadata] {
+		// 		<$error_type as $crate::dispatch::ModuleErrorMetadata>::metadata()
+		// 	}
+		// }
 	)
 }
 
@@ -105,8 +142,6 @@ fn expand_inherent(def: &Def) -> proc_macro2::TokenStream {
 	}
 }
 
-// TODO TODO: for each `format!(` check that space are correctly handled!!
-
 fn expand_event(def: &Def) -> proc_macro2::TokenStream {
 	let event = if let Some(event) = &def.event {
 		event
@@ -126,39 +161,45 @@ fn expand_event(def: &Def) -> proc_macro2::TokenStream {
 				#scrate::event::EventMetadata {
 					name: #scrate::event::DecodeDifferent::Encode(#name),
 					arguments: #scrate::event::DecodeDifferent::Encode(&[ #( #args )* ]),
-					documentation: $crate::event::DecodeDifferent::Encode(&[ #( #docs )* ]),
+					documentation: #scrate::event::DecodeDifferent::Encode(&[ #( #docs )* ]),
 				},
 			)
 		});
 
 	// Phantom data is added for generic event.
 	if event.is_generic {
-		let variant = syn::parse2(quote::quote!(
+		let variant = syn::parse_quote!(
 			#[doc(hidden)]
 			#[codec(skip)]
 			__Ignore(
 				#scrate::sp_std::marker::PhantomData<(#event_use_gen)>,
 				#scrate::Never,
 			),
-		)).expect("Internal error: internally constructed variant should be valid");
+		);
 
 		// Push ignore variant at the end.
 		item.variants.push(variant);
 	}
 
-	// Codec is derived TODO TODO
-	// For Clone, PartialEq and Eq this must be that all type implement Parameter.
-	// Enforcing them is fine because anyway this should be doable with Codec
-	// Or just create one similar to Codec
+	item.attrs.push(syn::parse_quote!(
+		#[derive(
+			#scrate::codec::Encode,
+			#scrate::codec::Decode,
+			#scrate::CloneBoundTypes,
+			#scrate::EqBoundTypes,
+			#scrate::PartialEqBoundTypes,
+		)]
+	));
+
+	item.attrs.push(syn::parse_quote!(
+		#[cfg_attr(feature = "std", derive(#scrate::DebugBoundTypes))]
+	));
+
+	item.attrs.push(syn::parse_quote!(
+		#[cfg_attr(not(feature = "std"), derive(#scrate::DebugStripped))]
+	));
 
 	quote::quote!(
-			// TODO TODO: derive Clone, PartialEq, Eq
-			// TODO TODO: Debug manually
-			Clone, PartialEq, Eq,
-			$crate::codec::Encode,
-			$crate::codec::Decode,
-			$crate::RuntimeDebug,
-
 		#item
 
 		impl<#event_impl_gen> From<#item_ident<#event_use_gen>> for () {
@@ -182,26 +223,20 @@ fn expand_error(def: &Def) -> proc_macro2::TokenStream {
 		return Default::default()
 	};
 
-	let item = &error.item;
+	let mut item = error.item.clone();
 	let item_ident = &error.item.ident;
 	let scrate = &def.scrate();
-	let type_impl_gen = &def.impl_block_generics();
-	let type_decl_gen = &def.type_decl_generics();
+	let type_impl_gen = &def.type_impl_generics();
 	let type_use_gen = &def.type_use_generics();
 
-	let item_with_phantom_data = {
-		let mut i = item.clone();
-		let variant = syn::parse2(quote::quote!(
-			#[doc(hidden)]
-			__Ignore(
-				#scrate::sp_std::marker::PhantomData<(#type_use_gen)>,
-				#scrate::Never,
-			),
-		)).expect("Internal error: internally constructed variant should be valid");
-
-		i.variants.insert(0, variant);
-		i
-	};
+	let phantom_variant = syn::parse_quote!(
+		#[doc(hidden)]
+		__Ignore(
+			#scrate::sp_std::marker::PhantomData<(#type_use_gen)>,
+			#scrate::Never,
+		),
+	);
+	item.variants.insert(0, phantom_variant);
 
 	let as_u8_matches = error.variants.iter()
 		.enumerate()
@@ -228,8 +263,8 @@ fn expand_error(def: &Def) -> proc_macro2::TokenStream {
 		#item
 
 		impl<#type_impl_gen> #scrate::sp_std::fmt::Debug for #item_ident<#type_use_gen> {
-			fn fmt(&self, f: &mut $crate::sp_std::fmt::Formatter<'_>)
-				-> $crate::sp_std::fmt::Result
+			fn fmt(&self, f: &mut #scrate::sp_std::fmt::Formatter<'_>)
+				-> #scrate::sp_std::fmt::Result
 			{
 				f.write_str(self.as_str())
 			}
@@ -284,7 +319,176 @@ fn expand_error(def: &Def) -> proc_macro2::TokenStream {
 }
 
 fn expand_call(def: &Def) -> proc_macro2::TokenStream {
-	todo!();
+	let item = &def.call.item;
+
+	let scrate = &def.scrate();
+	let type_impl_gen = &def.type_impl_generics();
+	let type_decl_gen = &def.type_decl_generics();
+	let type_use_gen = &def.type_use_generics();
+	let call_ident = &def.call.call;
+	let module_ident = &def.module.item.ident;
+	let where_clause = &item.generics.where_clause;
+
+	let fn_ = def.call.methods.iter().map(|method| &method.fn_).collect::<Vec<_>>();
+
+	let fn_weight = def.call.methods.iter().map(|method| &method.weight);
+
+	let fn_doc = def.call.methods.iter().map(|method| &method.docs).collect::<Vec<_>>();
+
+	let args_name = def.call.methods.iter()
+		.map(|method| method.args.iter().map(|(_, name, _)| name.clone()).collect::<Vec<_>>())
+		.collect::<Vec<_>>();
+
+	let args_type = def.call.methods.iter()
+		.map(|method| method.args.iter().map(|(_, _, type_)| type_.clone()).collect::<Vec<_>>())
+		.collect::<Vec<_>>();
+
+	let args_compact_attr = def.call.methods.iter().map(|method| {
+		method.args.iter()
+			.map(|(is_compact, _, _)| {
+				if *is_compact {
+					quote::quote!( #[codec(compact)] )
+				} else {
+					quote::quote!()
+				}
+			})
+			.collect::<Vec<_>>()
+	});
+
+	let args_metadata_type = def.call.methods.iter().map(|method| {
+		method.args.iter()
+			.map(|(is_compact, _, type_)| {
+				if *is_compact {
+					format!("Compact<{:?}>", type_)
+				} else {
+					format!("{:?}", type_)
+				}
+			})
+			.collect::<Vec<_>>()
+	});
+
+	quote::quote!(
+		#item // impl dispatchables on `Module`
+
+		#[derive(
+			#scrate::codec::Encode,
+			#scrate::codec::Decode,
+			#scrate::CloneBoundTypes,
+			#scrate::EqBoundTypes,
+			#scrate::PartialEqBoundTypes,
+		)]
+		#[cfg_attr(feature = "std", derive(#scrate::DebugBoundTypes))]
+		#[cfg_attr(not(feature = "std"), derive(#scrate::DebugStripped))]
+		#[allow(non_camel_case_types)]
+		pub enum #call_ident<#type_decl_gen> {
+			#[doc(hidden)]
+			#[codec(skip)]
+			__Ignore(
+				#scrate::sp_std::marker::PhantomData<(#type_use_gen)>,
+				#scrate::Never,
+			),
+			#( #fn_( #( #args_compact_attr #args_type )* ), )*
+		}
+
+		impl<#type_impl_gen> #scrate::dispatch::GetDispatchInfo for #call_ident<#type_use_gen>
+			#where_clause
+		{
+			fn get_dispatch_info(&self) -> #scrate::dispatch::DispatchInfo {
+				match *self {
+					#(
+						Self::#fn_ ( #( ref #args_name, )* ) => {
+							let base_weight = #fn_weight;
+
+							let weight = <
+								dyn #scrate::dispatch::WeighData<( #( & #args_type, )* )>
+							>::weigh_data(&base_weight, ( #( #args_name, )* ));
+
+							let class = <
+								dyn #scrate::dispatch::ClassifyDispatch<( #( & #args_type, )* )>
+							>::classify_dispatch(&base_weight, ( #( #args_name, )* ));
+
+							let pays_fee = <
+								dyn #scrate::dispatch::PaysFee<( #( & #args_type, )* )>
+							>::pays_fee(&base_weight, ( #( #args_name, )* ));
+
+							#scrate::dispatch::DispatchInfo {
+								weight,
+								class,
+								pays_fee,
+							}
+						},
+					)*
+					Self::__Ignore(_, _) => unreachable!("__Ignore cannot be used"),
+				}
+			}
+		}
+
+		impl<#type_impl_gen> #scrate::dispatch::GetCallName for #call_ident<#type_use_gen>
+			#where_clause
+		{
+			fn get_call_name(&self) -> &'static str {
+				match *self {
+					#( Self::#fn_(..) => stringify!(#fn_), )*
+					Self::__Ignore(_, _) => unreachable!("__PhantomItem cannot be used."),
+				}
+			}
+
+			fn get_call_names() -> &'static [&'static str] {
+				&[ #( stringify!(#fn_), )* ]
+			}
+		}
+
+		impl<#type_impl_gen> #scrate::traits::UnfilteredDispatchable for #call_ident<#type_use_gen>
+			#where_clause
+		{
+			type Origin = OriginFor<T>;
+			fn dispatch_bypass_filter(
+				self,
+				origin: Self::Origin
+			) -> #scrate::dispatch::DispatchResultWithPostInfo {
+				match self {
+					#(
+						Self::#fn_( #( #args_name, )* ) =>
+							<#module_ident<#type_use_gen>>::#fn_(origin, #( #args_name, )* )
+								.map(Into::into).map_err(Into::into),
+					)*
+					Self::__Ignore(_, _) => unreachable!("__PhantomItem cannot be used."),
+				}
+			}
+		}
+
+		impl<#type_impl_gen> #scrate::dispatch::Callable<T> for #module_ident<#type_use_gen>
+			#where_clause
+		{
+			type Call = #call_ident<#type_use_gen>;
+		}
+
+		impl<#type_impl_gen> #module_ident<#type_use_gen> #where_clause {
+			#[doc(hidden)]
+			pub fn call_functions() -> &'static [#scrate::dispatch::FunctionMetadata] {
+				&[ #(
+					#scrate::dispatch::FunctionMetadata {
+						name: #scrate::dispatch::DecodeDifferent::Encode(stringify!(#fn_)),
+						arguments: #scrate::dispatch::DecodeDifferent::Encode(
+							&[ #(
+								#scrate::dispatch::FunctionArgumentMetadata {
+									name: #scrate::dispatch::DecodeDifferent::Encode(
+										stringify!(#args_name)
+									),
+									ty: #scrate::dispatch::DecodeDifferent::Encode(
+										#args_metadata_type
+									),
+								},
+							)* ]
+						),
+						documentation: #scrate::dispatch::DecodeDifferent::Encode(
+							&[ #( #fn_doc ),* ]
+						),
+					},
+				)* ]
+			}
+		}
+	)
 }
 
 fn expand_origin(def: &Def) -> proc_macro2::TokenStream {
@@ -309,6 +513,7 @@ pub struct Def {
 	event: Option<event::EventDef>,
 	origin: Option<origin::OriginDef>,
 	inherent: Option<inherent::InherentDef>,
+	other_items: Vec<syn::Item>,
 }
 
 impl Def {
@@ -363,14 +568,25 @@ impl Def {
 			event: event_def,
 			origin: origin_def,
 			inherent: inherent_def,
+			other_items,
 		})
 	}
 
 	/// * either `T: Trait`
 	/// * or `T: Trait<I>, I: Instance`
-	fn impl_block_generics(&self) -> proc_macro2::TokenStream {
+	fn type_impl_generics(&self) -> proc_macro2::TokenStream {
 		if self.trait_.has_instance {
 			quote::quote!(T: Trait<I>, I: Instance)
+		} else {
+			quote::quote!(T: Trait)
+		}
+	}
+
+	/// * either `T: Trait`
+	/// * or `T: Trait<I>, I: 'static + Instance`
+	fn type_impl_static_generics(&self) -> proc_macro2::TokenStream {
+		if self.trait_.has_instance {
+			quote::quote!(T: Trait<I>, I: 'static + Instance)
 		} else {
 			quote::quote!(T: Trait)
 		}
@@ -427,141 +643,228 @@ mod keyword {
 	syn::custom_keyword!(error);
 }
 
-// TODO TODO: all those check must give hint about the wanted structure.
 /// Check the syntax: `I: Instance = DefaultInstance`
-pub struct CheckTraitDefGenerics;
-impl syn::parse::Parse for CheckTraitDefGenerics {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<keyword::I>()?;
-		input.parse::<syn::Token![:]>()?;
-		input.parse::<keyword::Instance>()?;
-		input.parse::<syn::Token![=]>()?;
-		input.parse::<keyword::DefaultInstance>()?;
-		// TODO TODO: parse terminated.
+///
+/// `span` is used in case generics is empty (empty generics has span == call_site).
+///
+/// return the instance if found.
+fn check_trait_def_generics(
+	gen: &syn::Generics,
+	span: proc_macro2::Span,
+) -> syn::Result<()> {
+	let expected = "expect `I: Instance = DefaultInstance`";
+	pub struct CheckTraitDefGenerics;
+	impl syn::parse::Parse for CheckTraitDefGenerics {
+		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+			input.parse::<keyword::I>()?;
+			input.parse::<syn::Token![:]>()?;
+			input.parse::<keyword::Instance>()?;
+			input.parse::<syn::Token![=]>()?;
+			input.parse::<keyword::DefaultInstance>()?;
 
-		Ok(Self)
+			Ok(Self)
+		}
 	}
-}
 
-/// Check the syntax: `origin: OriginFor<T>`
-pub struct CheckDispatchableFirstArg;
-impl syn::parse::Parse for CheckDispatchableFirstArg {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<keyword::origin>()?;
-		input.parse::<syn::Token![:]>()?;
-		input.parse::<keyword::OriginFor>()?;
-		input.parse::<syn::Token![<]>()?;
-		input.parse::<keyword::T>()?;
-		input.parse::<syn::Token![>]>()?;
+	syn::parse2::<CheckTraitDefGenerics>(gen.params.to_token_stream())
+		.map_err(|e| {
+			let msg = format!("Invalid generics: {}", expected);
+			let mut err = syn::Error::new(span, msg);
+			err.combine(e);
+			err
+		})?;
 
-		// TODO TODO: parse terminated.
-
-		Ok(Self)
-	}
+	Ok(())
 }
 
 /// Check the syntax:
 /// * either `T`
 /// * or `T, I = DefaultInstance`
-pub struct CheckStructDefGenerics;
-impl syn::parse::Parse for CheckStructDefGenerics {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<keyword::T>()?;
-		if input.peek(syn::Token![,]) {
-			input.parse::<syn::Token![,]>()?;
-			input.parse::<keyword::I>()?;
-			input.parse::<syn::Token![=]>()?;
-			input.parse::<keyword::DefaultInstance>()?;
-		}
-		// TODO TODO: parse terminated.
+///
+/// `span` is used in case generics is empty (empty generics has span == call_site).
+///
+/// return the instance if found.
+fn check_type_def_generics(
+	gen: &syn::Generics,
+	span: proc_macro2::Span,
+) -> syn::Result<Option<keyword::I>> {
+	let expected = "expect `T` or `T, I = DefaultInstance`";
+	pub struct CheckTypeDefGenerics(Option<keyword::I>);
+	impl syn::parse::Parse for CheckTypeDefGenerics {
+		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+			let mut instance = None;
+			input.parse::<keyword::T>()?;
+			if input.peek(syn::Token![,]) {
+				input.parse::<syn::Token![,]>()?;
+				instance = Some(input.parse::<keyword::I>()?);
+				input.parse::<syn::Token![=]>()?;
+				input.parse::<keyword::DefaultInstance>()?;
+			}
 
-		Ok(Self)
+			Ok(Self(instance))
+		}
 	}
+
+	let i = syn::parse2::<CheckTypeDefGenerics>(gen.params.to_token_stream())
+		.map_err(|e| {
+			let msg = format!("Invalid type def generics: {}", expected);
+			let mut err = syn::Error::new(span, msg);
+			err.combine(e);
+			err
+		})?.0;
+
+	Ok(i)
 }
 
 /// Check the syntax:
 /// * either `T`
 /// * or `T, I = DefaultInstance`
 /// * or nothing
-pub struct CheckTypeDefOptionalGenerics;
-impl syn::parse::Parse for CheckTypeDefOptionalGenerics {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		if input.is_empty() {
-			return Ok(Self)
-		}
+///
+/// `span` is used in case generics is empty (empty generics has span == call_site).
+///
+/// return the instance if found.
+fn check_type_def_optional_generics(
+	gen: &syn::Generics,
+	span: proc_macro2::Span,
+) -> syn::Result<Option<keyword::I>> {
+	let expected = "expect `` or `T` or `T, I = DefaultInstance`";
+	pub struct CheckTypeDefOptionalGenerics(Option<keyword::I>);
+	impl syn::parse::Parse for CheckTypeDefOptionalGenerics {
+		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+			let mut instance = None;
+			if input.is_empty() {
+				return Ok(Self(instance))
+			}
 
-		input.parse::<keyword::T>()?;
-		if input.peek(syn::Token![,]) {
-			input.parse::<syn::Token![,]>()?;
-			input.parse::<keyword::I>()?;
-			input.parse::<syn::Token![=]>()?;
-			input.parse::<keyword::DefaultInstance>()?;
-		}
-		// TODO TODO: parse terminated.
+			input.parse::<keyword::T>()?;
+			if input.peek(syn::Token![,]) {
+				input.parse::<syn::Token![,]>()?;
+				instance = Some(input.parse::<keyword::I>()?);
+				input.parse::<syn::Token![=]>()?;
+				input.parse::<keyword::DefaultInstance>()?;
+			}
 
-		Ok(Self)
+			Ok(Self(instance))
+		}
 	}
+
+	let i = syn::parse2::<CheckTypeDefOptionalGenerics>(gen.params.to_token_stream())
+		.map_err(|e| {
+			let msg = format!("Invalid type def generics: {}", expected);
+			let mut err = syn::Error::new(span, msg);
+			err.combine(e);
+			err
+		})?.0;
+
+	Ok(i)
+}
+
+/// Check the syntax: `origin: OriginFor<T>`
+fn check_dispatchable_first_arg(arg: &syn::FnArg) -> syn::Result<()> {
+	let expected = "expect `origin: OriginFor<T>`";
+
+	pub struct CheckDispatchableFirstArg;
+	impl syn::parse::Parse for CheckDispatchableFirstArg {
+		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+			input.parse::<keyword::origin>()?;
+			input.parse::<syn::Token![:]>()?;
+			input.parse::<keyword::OriginFor>()?;
+			input.parse::<syn::Token![<]>()?;
+			input.parse::<keyword::T>()?;
+			input.parse::<syn::Token![>]>()?;
+
+			Ok(Self)
+		}
+	}
+
+	syn::parse2::<CheckDispatchableFirstArg>(arg.to_token_stream())
+		.map_err(|e| {
+			let msg = format!("Invalid arg: {}", expected);
+			let mut err = syn::Error::new(arg.span(), msg);
+			err.combine(e);
+			err
+		})?;
+
+	Ok(())
 }
 
 /// Check the syntax:
 /// * either `Module<T>`
 /// * or `Module<T, I>`
-pub struct CheckModuleUseType;
-impl syn::parse::Parse for CheckModuleUseType {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<keyword::Module>()?;
-		input.parse::<syn::Token![<]>()?;
-		input.parse::<keyword::T>()?;
-		if input.peek(syn::Token![,]) {
-			input.parse::<syn::Token![,]>()?;
-			input.parse::<keyword::I>()?;
-		}
-		input.parse::<syn::Token![>]>()?;
-		// TODO TODO: parse terminated.
+///
+/// return the instance if found.
+fn check_module_usage(type_: &Box<syn::Type>) -> syn::Result<Option<keyword::I>> {
+	let expected = "expect `Module<T>` or `Module<T, I>`";
+	pub struct CheckModuleUseType(Option<keyword::I>);
+	impl syn::parse::Parse for CheckModuleUseType {
+		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+			let mut instance = None;
+			input.parse::<keyword::Module>()?;
+			input.parse::<syn::Token![<]>()?;
+			input.parse::<keyword::T>()?;
+			if input.peek(syn::Token![,]) {
+				input.parse::<syn::Token![,]>()?;
+				instance = Some(input.parse::<keyword::I>()?);
+			}
+			input.parse::<syn::Token![>]>()?;
 
-		Ok(Self)
+			Ok(Self(instance))
+		}
 	}
+
+	let i = syn::parse2::<CheckModuleUseType>(type_.to_token_stream())
+		.map_err(|e| {
+			let msg = format!("Invalid module type: {}", expected);
+			let mut err = syn::Error::new(type_.span(), msg);
+			err.combine(e);
+			err
+		})?.0;
+
+	Ok(i)
 }
 
-/// Check the syntax:
-/// * either `T`
-/// * or `T, I`
-pub struct CheckStructUseGenerics;
-impl syn::parse::Parse for CheckStructUseGenerics {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<keyword::T>()?;
-		if input.peek(syn::Token![,]) {
-			input.parse::<syn::Token![,]>()?;
-			input.parse::<keyword::I>()?;
-		}
-		// TODO TODO: parse terminated.
-
-		Ok(Self)
-	}
-}
-
-/// Check the syntax:
+/// Check the generic is:
 /// * either `T: Trait`
 /// * or `T: Trait<I>, I: Instance`
-pub struct CheckImplGenerics;
-impl syn::parse::Parse for CheckImplGenerics {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		input.parse::<keyword::T>()?;
-		input.parse::<syn::Token![:]>()?;
-		input.parse::<keyword::Trait>()?;
-		if input.peek(syn::Token![<]) {
-			input.parse::<syn::Token![<]>()?;
-			input.parse::<keyword::I>()?;
-			input.parse::<syn::Token![>]>()?;
-			input.parse::<syn::Token![,]>()?;
-			input.parse::<keyword::I>()?;
+///
+/// `span` is used in case generics is empty (empty generics has span == call_site).
+///
+/// return weither it contains instance.
+fn check_impl_generics(
+	gen: &syn::Generics,
+	span: proc_macro2::Span
+) -> syn::Result<Option<keyword::I>> {
+	let expected = "expect `T: Trait` or `T: Trait<I>, I: Instance`";
+	pub struct CheckImplGenerics(Option<keyword::I>);
+	impl syn::parse::Parse for CheckImplGenerics {
+		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+			let mut instance = None;
+			input.parse::<keyword::T>()?;
 			input.parse::<syn::Token![:]>()?;
-			input.parse::<keyword::Instance>()?;
-		}
-		// TODO TODO: parse terminated.
+			input.parse::<keyword::Trait>()?;
+			if input.peek(syn::Token![<]) {
+				input.parse::<syn::Token![<]>()?;
+				instance = Some(input.parse::<keyword::I>()?);
+				input.parse::<syn::Token![>]>()?;
+				input.parse::<syn::Token![,]>()?;
+				input.parse::<keyword::I>()?;
+				input.parse::<syn::Token![:]>()?;
+				input.parse::<keyword::Instance>()?;
+			}
 
-		Ok(Self)
+			Ok(Self(instance))
+		}
 	}
+
+	let i = syn::parse2::<CheckImplGenerics>(gen.params.to_token_stream())
+		.map_err(|e| {
+			let mut err = syn::Error::new(span, format!("Invalid generics: {}", expected));
+			err.combine(e);
+			err
+		})?.0;
+
+	Ok(i)
 }
 
 /// Parse attribute which starts with `pallet::` (e.g. `#[pallet::trait_]`)

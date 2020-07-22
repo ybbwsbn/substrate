@@ -312,7 +312,6 @@ pub fn derive_clone_bound_type(input: TokenStream) -> TokenStream {
 		&mut input.generics,
 		&input.data,
 		syn::parse_quote!(core::clone::Clone),
-		None,
 		false,
 	) {
 		return e.to_compile_error().into();
@@ -372,7 +371,7 @@ pub fn derive_clone_bound_type(input: TokenStream) -> TokenStream {
 			})
 		},
 		syn::Data::Union(_) => {
-			let msg ="Union type not supported by `derive(CloneBoundType)`";
+			let msg ="Union type not supported by `derive(CloneBoundTypes)`";
 			return syn::Error::new(input.span(), msg).to_compile_error().into()
 		},
 	};
@@ -381,6 +380,141 @@ pub fn derive_clone_bound_type(input: TokenStream) -> TokenStream {
 		const _: () = {
 			impl #impl_generics core::clone::Clone for #name #ty_generics #where_clause {
 				fn clone(&self) -> Self {
+					#impl_
+				}
+			}
+		};
+	).into()
+}
+
+#[proc_macro_derive(DebugStripped)]
+pub fn derive_debug_stripped(input: TokenStream) -> TokenStream {
+	let mut input: syn::DeriveInput = match syn::parse(input) {
+		Ok(input) => input,
+		Err(e) => return e.to_compile_error().into(),
+	};
+
+	if let Err(e) = trait_bounds::add(
+		&input.ident,
+		&mut input.generics,
+		&input.data,
+		syn::parse_quote!(core::fmt::Debug),
+		false,
+	) {
+		return e.to_compile_error().into();
+	}
+
+	let name = &input.ident;
+	let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+	quote::quote!(
+		const _: () = {
+			impl #impl_generics core::fmt::Debug for #name #ty_generics #where_clause {
+				fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
+					fmt.write_str("<wasm:stripped>")
+				}
+			}
+		};
+	).into()
+}
+
+#[proc_macro_derive(DebugBoundTypes)]
+pub fn derive_debug_bound_type(input: TokenStream) -> TokenStream {
+	use syn::spanned::Spanned;
+
+	let mut input: syn::DeriveInput = match syn::parse(input) {
+		Ok(input) => input,
+		Err(e) => return e.to_compile_error().into(),
+	};
+
+	if let Err(e) = trait_bounds::add(
+		&input.ident,
+		&mut input.generics,
+		&input.data,
+		syn::parse_quote!(core::fmt::Debug),
+		false,
+	) {
+		return e.to_compile_error().into();
+	}
+
+	let input_ident = &input.ident;
+	let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+	let impl_ = match input.data {
+		syn::Data::Struct(struct_) => match struct_.fields {
+			syn::Fields::Named(named) => {
+				let fields = named.named.iter()
+					.map(|i| i.ident.as_ref().expect("named fields have ident"))
+					.map(|i| quote::quote!( .field(stringify!(#i), &self.#i) ));
+
+				quote::quote!( fmt.debug_struct(stringify!(#input_ident))
+					#( #fields )*
+					.finish()
+				)
+			},
+			syn::Fields::Unnamed(unnamed) => {
+				let fields = unnamed.unnamed.iter().enumerate()
+					.map(|(i, _)| syn::Index::from(i))
+					.map(|i| quote::quote!( .field(&self.#i) ));
+
+				quote::quote!( fmt.debug_tuple(stringify!(#input_ident))
+					#( #fields )*
+					.finish()
+				)
+			},
+			syn::Fields::Unit => quote::quote!( fmt.write_str(stringify!(#input_ident)) ),
+		},
+		syn::Data::Enum(enum_) => {
+			let variants = enum_.variants.iter()
+				.map(|variant| {
+					let ident = &variant.ident;
+					let full_variant_str = format!("{}::{}", input_ident, ident);
+					match &variant.fields {
+						syn::Fields::Named(named) => {
+							let captured = named.named.iter()
+								.map(|i| i.ident.as_ref().expect("named fields have ident"));
+							let debuged = captured.clone()
+								.map(|i| quote::quote!( .field(stringify!(#i), &#i) ));
+							quote::quote!(
+								Self::#ident { #( #captured, )* } => {
+									fmt.debug_struct(#full_variant_str)
+										#( #debuged )*
+										.finish()
+								}
+							)
+						},
+						syn::Fields::Unnamed(unnamed) => {
+							let captured = unnamed.unnamed.iter().enumerate()
+								.map(|(i, f)| syn::Ident::new(&format!("_{}", i), f.span()));
+							let debuged = captured.clone().map(|i| quote::quote!( .field(&#i) ));
+							quote::quote!(
+								Self::#ident ( #( #captured, )* ) => {
+									fmt.debug_tuple(#full_variant_str)
+										#( #debuged )*
+										.finish()
+								}
+							)
+						},
+						syn::Fields::Unit => quote::quote!(
+							Self::#ident => fmt.write_str(#full_variant_str)
+						),
+					}
+				});
+
+			quote::quote!( match &self {
+				#( #variants, )*
+			})
+		},
+		syn::Data::Union(_) => {
+			let msg ="Union type not supported by `derive(DebugBoundTypes)`";
+			return syn::Error::new(input.span(), msg).to_compile_error().into()
+		},
+	};
+
+	quote::quote!(
+		const _: () = {
+			impl #impl_generics core::fmt::Debug for #input_ident #ty_generics #where_clause {
+				fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
 					#impl_
 				}
 			}
@@ -403,7 +537,6 @@ pub fn derive_partial_eq_bound_type(input: TokenStream) -> TokenStream {
 		&mut input.generics,
 		&input.data,
 		syn::parse_quote!(core::cmp::PartialEq),
-		None,
 		false,
 	) {
 		return e.to_compile_error().into();
@@ -484,7 +617,7 @@ pub fn derive_partial_eq_bound_type(input: TokenStream) -> TokenStream {
 			})
 		},
 		syn::Data::Union(_) => {
-			let msg ="Union type not supported by `derive(CloneBoundType)`";
+			let msg ="Union type not supported by `derive(CloneBoundTypes)`";
 			return syn::Error::new(input.span(), msg).to_compile_error().into()
 		},
 	};
@@ -512,7 +645,6 @@ pub fn derive_eq_bound_type(input: TokenStream) -> TokenStream {
 		&mut input.generics,
 		&input.data,
 		syn::parse_quote!(core::cmp::Eq),
-		None,
 		false,
 	) {
 		return e.to_compile_error().into();
@@ -625,7 +757,6 @@ mod trait_bounds {
 		generics: &mut Generics,
 		data: &syn::Data,
 		codec_bound: syn::Path,
-		codec_skip_bound: Option<syn::Path>,
 		dumb_trait_bounds: bool,
 	) -> Result<()> {
 		let ty_params = generics.type_params().map(|p| p.ident.clone()).collect::<Vec<_>>();

@@ -1,4 +1,4 @@
-use super::{CheckTraitDefGenerics, take_item_attrs, get_doc_literals};
+use super::{take_item_attrs, get_doc_literals};
 use syn::spanned::Spanned;
 use quote::ToTokens;
 
@@ -10,80 +10,14 @@ mod keyword {
 	syn::custom_keyword!(const_);
 }
 
-// TODO TODO: maybe allow additional spefici constant metadata
-
 pub struct TraitDef {
 	/// The trait definition, with all pallet attribute processed. (i.e. pallet::const_ attributes
 	/// has been removed.
 	pub item: syn::ItemTrait,
-
-	// struct_def_generics: `<T: Trait<I>, T: Instance = DefaultInstance> where ..`
-	// impl_generics: `<T: Trait<I>, T: Instance> where ..`
-	// struct_use_generics: `<T, I>`
-
+	/// Wheither the trait has instance (i.e. define with `Trait<I: Instance = DefaultInstance>`)
 	pub has_instance: bool,
-
-	// `type $ident: Get<$type>`
-	pub consts_metadata: Vec<ConstMetadataDef>, // Maybe add `Get`
-	// instance: Span,
-
-	// REQUIRES:
-	// - `T`, Trait, I, Instance, ¿where_clause?, then define a function constant metadata used by module,
-	// - consts: name type, value=getter, docs
-}
-
-impl TraitDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
-		if let syn::Item::Trait(mut item) = item {
-			syn::parse2::<keyword::Trait>(item.ident.to_token_stream())?;
-			if item.generics.where_clause.is_some() {
-				let msg = "Invalid pallet::trait, expect no where clause";
-				return Err(syn::Error::new(item.generics.where_clause.span(), msg));
-			}
-			if item.generics.params.len() > 1 {
-				let msg = "Invalid pallet::trait, expect no more than one generics";
-				return Err(syn::Error::new(item.generics.params[2].span(), msg));
-			}
-
-			let has_instance;
-			if let Some(instance) = item.generics.params.first() {
-				syn::parse2::<CheckTraitDefGenerics>(instance.to_token_stream())?;
-				has_instance = true;
-			} else {
-				has_instance = false;
-			}
-
-			let mut consts_metadata = vec![];
-			for trait_item in &mut item.items {
-				let trait_item_attrs: Vec<PalletTraitAttr> = take_item_attrs(trait_item)?;
-
-				if trait_item_attrs.len() > 1 {
-					let msg = "Invalid attribute in pallet::trait, only one attribute is expected";
-					return Err(syn::Error::new(trait_item_attrs[2].span(), msg));
-				}
-
-				match trait_item_attrs.first() {
-					Some(PalletTraitAttr::Const(_span)) => match trait_item {
-						syn::TraitItem::Type(type_) => {
-							let const_ = syn::parse2::<ConstMetadataDef>(type_.to_token_stream())?;
-							consts_metadata.push(const_);
-						},
-						_ => {
-							let msg = "Invalid pallet::const in pallet::trait, expect type trait \
-								item";
-							return Err(syn::Error::new(trait_item.span(), msg));
-						},
-					},
-					None => (),
-				}
-			}
-
-			Ok(Self { item, has_instance, consts_metadata })
-		} else {
-			let msg = "Invalid pallet::trait, expect Trait definition";
-			Err(syn::Error::new(item.span(), msg))
-		}
-	}
+	/// Const associated type.
+	pub consts_metadata: Vec<ConstMetadataDef>,
 }
 
 pub struct ConstMetadataDef {
@@ -108,20 +42,15 @@ impl syn::parse::Parse for ConstMetadataDef  {
 	}
 }
 
-// TODO TODO: change to struct
-pub enum PalletTraitAttr {
-	Const(proc_macro2::Span),
-}
+pub struct TypeAttrConst(proc_macro2::Span);
 
-impl Spanned for PalletTraitAttr {
+impl Spanned for TypeAttrConst {
 	fn span(&self) -> proc_macro2::Span {
-		match self {
-			Self::Const(span) => span.clone(),
-		}
+		self.0
 	}
 }
 
-impl syn::parse::Parse for PalletTraitAttr {
+impl syn::parse::Parse for TypeAttrConst {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		input.parse::<syn::Token![#]>()?;
 		let content;
@@ -129,11 +58,76 @@ impl syn::parse::Parse for PalletTraitAttr {
 		content.parse::<syn::Ident>()?;
 		content.parse::<syn::Token![::]>()?;
 
-		let lookahead = content.lookahead1();
-		if lookahead.peek(keyword::const_) { // TODO TODO: maybe `const` is doable
-			Ok(PalletTraitAttr::Const(content.parse::<keyword::const_>()?.span()))
+		Ok(TypeAttrConst(content.parse::<keyword::const_>()?.span()))
+	}
+}
+
+impl TraitDef {
+	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
+		if let syn::Item::Trait(mut item) = item {
+			if !matches!(item.vis, syn::Visibility::Public(_)) {
+				let msg = "Invalid pallet::trait_, Trait must be public";
+				return Err(syn::Error::new(item.span(), msg));
+			}
+
+			syn::parse2::<keyword::Trait>(item.ident.to_token_stream())?;
+
+			if item.generics.where_clause.is_some() {
+				let msg = "Invalid pallet::trait, expect no where clause";
+				return Err(syn::Error::new(item.generics.where_clause.span(), msg));
+			}
+
+			if item.generics.params.len() > 1 {
+				let msg = "Invalid pallet::trait, expect no more than one generics";
+				return Err(syn::Error::new(item.generics.params[2].span(), msg));
+			}
+
+			let has_instance;
+			if let Some(_) = item.generics.params.first() {
+				super::check_trait_def_generics(&item.generics, item.ident.span())?;
+				has_instance = true;
+			} else {
+				has_instance = false;
+			}
+
+			let mut consts_metadata = vec![];
+			for trait_item in &mut item.items {
+				let type_attrs_const: Vec<TypeAttrConst> = take_item_attrs(trait_item)?;
+
+				if type_attrs_const.len() > 1 {
+					let msg = "Invalid attribute in pallet::trait, only one attribute is expected";
+					return Err(syn::Error::new(type_attrs_const[1].span(), msg));
+				}
+
+				if type_attrs_const.len() == 1 {
+					match trait_item {
+						syn::TraitItem::Type(type_) => {
+							let const_ = syn::parse2::<ConstMetadataDef>(type_.to_token_stream())
+								.map_err(|e| {
+									let error_msg = "Invalid usage of `#[pallet::const_]`, syntax \
+										must be `type $SomeIdent: Get<$SomeType>;`";
+									let mut err = syn::Error::new(type_.span(), error_msg);
+									err.combine(e);
+									err
+								})?;
+
+							consts_metadata.push(const_);
+						},
+						_ => {
+							let msg = "Invalid pallet::const in pallet::trait, expect type trait \
+								item";
+							return Err(syn::Error::new(trait_item.span(), msg));
+						},
+					}
+				}
+			}
+
+			// TODO TODO: check for frame_system bound ?
+
+			Ok(Self { item, has_instance, consts_metadata })
 		} else {
-			Err(lookahead.error())
+			let msg = "Invalid pallet::trait, expect Trait definition";
+			Err(syn::Error::new(item.span(), msg))
 		}
 	}
 }
