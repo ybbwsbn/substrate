@@ -149,9 +149,18 @@ fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
 	)
 }
 
-// TODO TODO: maybe add derive for Clone Copy and else (as done by decl_module)
 fn expand_module(def: &Def) -> proc_macro2::TokenStream {
-	let item = &def.module.item;
+	let scrate = &def.scrate();
+	let mut item = def.module.item.clone();
+	item.attrs.push(syn::parse_quote!(
+		#[derive(
+			#scrate::CloneBoundTypes,
+			#scrate::EqBoundTypes,
+			#scrate::PartialEqBoundTypes,
+			#scrate::DebugStripped,
+		)]
+	));
+
 	quote::quote!(
 		#item
 

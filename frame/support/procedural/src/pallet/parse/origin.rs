@@ -45,8 +45,6 @@ impl OriginDef {
 			return Err(syn::Error::new(ident.span(), msg));
 		}
 
-		// TODO TODO: check instance has default and consistent
-
 		Ok(OriginDef {
 			item,
 			has_instance,
