@@ -22,14 +22,5 @@ pub fn expand_module(def: &mut Def) -> proc_macro2::TokenStream {
 		)]
 	));
 
-	quote::quote!(
-		// TODO TODO:
-		// impl<$trait_instance: $trait_name $(<I>, $instance: $instantiable)?> $crate::dispatch::ModuleErrorMetadata
-		// 	for $mod_type<$trait_instance $(, $instance)?> where $( $other_where_bounds )*
-		// {
-		// 	fn metadata() -> &'static [$crate::dispatch::ErrorMetadata] {
-		// 		<$error_type as $crate::dispatch::ModuleErrorMetadata>::metadata()
-		// 	}
-		// }
-	)
+	Default::default()
 }
