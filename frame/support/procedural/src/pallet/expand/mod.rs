@@ -6,6 +6,7 @@ mod event;
 
 use crate::pallet::Def;
 use quote::ToTokens;
+use frame_support_procedural_tools::{generate_hidden_includes};
 
 /// Expand definition:
 /// * add some bounds and variants to type defined,
@@ -18,7 +19,11 @@ pub fn expand(mut def: Def) -> proc_macro2::TokenStream {
 	let error = error::expand_error(&mut def);
 	let event = event::expand_event(&mut def);
 
+	let scrate_decl = generate_hidden_includes(&def.hidden_crate_name(), "frame-support");
+
 	let new_items = quote::quote!(
+		#scrate_decl
+
 		#trait_
 		#module
 		#call

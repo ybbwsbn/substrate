@@ -9,9 +9,9 @@ mod event;
 pub mod helper;
 
 use syn::spanned::Spanned;
+use frame_support_procedural_tools::generate_crate_access;
 
-// TODO TODO: maybe check reserved function or just warn ?
-// TODO TODO: flag to rename frame_system
+// TODO TODO: configure frame-system path through attribute
 
 /// Parsed definition of a pallet.
 pub struct Def {
@@ -87,6 +87,8 @@ impl Def {
 		Ok(def)
 	}
 
+	/// Check that usage of trait `Trait` is consistent with the definition, i.e. it is used with
+	/// instance iff it is defined with instance.
 	fn check_instance_usage(&self) -> syn::Result<()> {
 		let mut instances = vec![];
 		instances.extend_from_slice(&self.call.instances[..]);
@@ -169,10 +171,14 @@ impl Def {
 		}
 	}
 
+	/// Unique id used to generate crate access to frame-support.
+	pub fn hidden_crate_name(&self) -> &'static str {
+		"pallet"
+	}
+
 	/// Return path to frame-support crate.
 	pub fn scrate(&self) -> proc_macro2::TokenStream {
-		// TODO TODO
-		quote::quote!(frame_support)
+		generate_crate_access(&self.hidden_crate_name(), "frame-support")
 	}
 }
 
