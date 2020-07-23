@@ -1,4 +1,5 @@
 use syn::spanned::Spanned;
+use super::helper;
 
 /// Either:
 /// * `type Origin`
@@ -7,15 +8,16 @@ use syn::spanned::Spanned;
 ///
 /// type generics can only be nothing or `T` or `T, I`
 pub struct OriginDef {
-	pub item: syn::Item,
+	/// The index of error item in pallet module.
+	pub index: usize,
 	pub has_instance: bool,
 	pub is_generic: bool,
 	/// A set of usage of instance, must be check for consistency with trait.
-	pub instances: Vec<super::InstanceUsage>,
+	pub instances: Vec<helper::InstanceUsage>,
 }
 
 impl OriginDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
+	pub fn try_from(index: usize, item: &mut syn::Item) -> syn::Result<Self> {
 		let item_span = item.span();
 		let (vis, ident, generics) = match &item {
 			syn::Item::Enum(item) => (&item.vis, &item.ident, &item.generics),
@@ -31,7 +33,7 @@ impl OriginDef {
 		let is_generic = generics.params.len() > 0;
 
 		let mut instances = vec![];
-		if let Some(u) = super::check_type_def_optional_generics(&generics, item.span())? {
+		if let Some(u) = helper::check_type_def_optional_generics(&generics, item.span())? {
 			instances.push(u);
 		}
 
@@ -46,7 +48,7 @@ impl OriginDef {
 		}
 
 		Ok(OriginDef {
-			item,
+			index,
 			has_instance,
 			is_generic,
 			instances,

@@ -1,4 +1,4 @@
-use super::get_doc_literals;
+use super::helper;
 use syn::spanned::Spanned;
 use quote::ToTokens;
 
@@ -10,16 +10,18 @@ mod keyword {
 /// This checks error declaration as a enum declaration with only variants without fields nor
 /// discriminant.
 pub struct ErrorDef {
-	/// Full enum_ declaration.
-	pub item: syn::ItemEnum,
+	/// The index of error item in pallet module.
+	pub index: usize,
 	/// Variants ident and doc literals (ordered as declaration order)
 	pub variants: Vec<(syn::Ident, Vec<syn::Lit>)>,
 	/// A set of usage of instance, must be check for consistency with trait.
-	pub instances: Vec<super::InstanceUsage>,
+	pub instances: Vec<helper::InstanceUsage>,
+	/// The keyword error used (contains span).
+	pub error: keyword::Error
 }
 
 impl ErrorDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
+	pub fn try_from(index: usize, item: &mut syn::Item) -> syn::Result<Self> {
 		let item = if let syn::Item::Enum(item) = item {
 			item
 		} else {
@@ -31,14 +33,14 @@ impl ErrorDef {
 		}
 
 		let mut instances = vec![];
-		instances.push(super::check_type_def_generics(&item.generics, item.span())?);
+		instances.push(helper::check_type_def_generics(&item.generics, item.span())?);
 
 		if item.generics.where_clause.is_some() {
 			let msg = "Invalid pallet::error, unexpected where clause";
-			return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
+			return Err(syn::Error::new(item.generics.where_clause.as_ref().unwrap().span(), msg));
 		}
 
-		syn::parse2::<keyword::Error>(item.ident.to_token_stream())?;
+		let error = syn::parse2::<keyword::Error>(item.ident.to_token_stream())?;
 
 		let variants = item.variants.iter()
 			.map(|variant| {
@@ -53,14 +55,15 @@ impl ErrorDef {
 					return Err(syn::Error::new(span, msg));
 				}
 
-				Ok((variant.ident.clone(), get_doc_literals(&variant.attrs)))
+				Ok((variant.ident.clone(), helper::get_doc_literals(&variant.attrs)))
 			})
 			.collect::<Result<_, _>>()?;
 
 		Ok(ErrorDef {
-			item,
+			index,
 			variants,
 			instances,
+			error,
 		})
 	}
 }

@@ -1,3 +1,4 @@
+use super::helper;
 use syn::spanned::Spanned;
 use quote::ToTokens;
 
@@ -7,13 +8,16 @@ mod keyword {
 }
 
 pub struct ModuleDef {
-	pub item: syn::ItemStruct,
+	/// The index of error item in pallet module.
+	pub index: usize,
 	/// A set of usage of instance, must be check for consistency with trait.
-	pub instances: Vec<super::InstanceUsage>,
+	pub instances: Vec<helper::InstanceUsage>,
+	/// The keyword module used (contains span).
+	pub module: keyword::Module,
 }
 
 impl ModuleDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
+	pub fn try_from(index: usize, item: &mut syn::Item) -> syn::Result<Self> {
 		let item = if let syn::Item::Struct(item) = item {
 			item
 		} else {
@@ -21,7 +25,7 @@ impl ModuleDef {
 			return Err(syn::Error::new(item.span(), msg));
 		};
 
-		syn::parse2::<keyword::Module>(item.ident.to_token_stream())?;
+		let module = syn::parse2::<keyword::Module>(item.ident.to_token_stream())?;
 
 		if !matches!(item.vis, syn::Visibility::Public(_)) {
 			let msg = "Invalid pallet::module, Module must be public";
@@ -33,10 +37,10 @@ impl ModuleDef {
 		}
 
 		let mut instances = vec![];
-		instances.push(super::check_type_def_generics(&item.generics, item.span())?);
+		instances.push(helper::check_type_def_generics(&item.generics, item.span())?);
 
 		// TODO TODO : also check fields.
 
-		Ok(Self { item, instances })
+		Ok(Self { index, instances, module })
 	}
 }

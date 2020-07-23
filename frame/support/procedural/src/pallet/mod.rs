@@ -16,17 +16,14 @@
 // limitations under the License.
 
 mod parse;
+mod expand;
+
+pub use parse::Def;
 
 pub fn pallet(_attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-	// TODO TODO: assert attr is empty
 	let item = syn::parse_macro_input!(item as syn::ItemMod);
-	match pallet_from_item_mod(item) {
-		Ok(s) => s.into(),
+	match parse::Def::try_from(item) {
+		Ok(def) => expand::expand(def).into(),
 		Err(e) => e.to_compile_error().into(),
 	}
-}
-
-pub fn pallet_from_item_mod(item: syn::ItemMod) -> syn::Result<proc_macro2::TokenStream> {
-	let def = parse::Def::try_from(item)?;
-	Ok(parse::expand(def))
 }

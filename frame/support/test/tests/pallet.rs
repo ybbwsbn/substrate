@@ -47,10 +47,10 @@ mod pallet {
 
 	#[pallet::event]
 	pub enum Event<T: Trait<I>, I: Instance = DefaultInstance> {
-		/// TOTO
+		/// A
 		A(T::Balance, T::Balance, u32),
-		/// TATA
-		/// TITI
+		/// B
+		/// B2
 		B { aa: u32, bb: T::Balance },
 	}
 
@@ -62,8 +62,7 @@ mod pallet {
 		type Call = Call<T, I>;
 		type Error = super::InherentError;
 
-		// TODO TODO: can I solve issue when wrong stuff like missing `: InherentIdentifier` here
-		const INHERENT_IDENTIFIER= super::INHERENT_IDENTIFIER;
+		const INHERENT_IDENTIFIER: InherentIdentifier = super::INHERENT_IDENTIFIER;
 
 		fn create_inherent(_data: &InherentData) -> Option<Self::Call> {
 			unimplemented!();

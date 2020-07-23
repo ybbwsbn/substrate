@@ -1,4 +1,4 @@
-use super::{take_item_attrs, get_doc_literals};
+use super::helper;
 use syn::spanned::Spanned;
 use quote::ToTokens;
 
@@ -9,11 +9,14 @@ mod keyword {
 }
 
 pub struct EventDef {
-	pub item: syn::ItemEnum,
+	/// The index of event item in pallet module.
+	pub index: usize,
+	/// The keyword Event used (contains span).
+	pub event: keyword::Event,
 	/// Event metadatas: `(name, args, docs)`.
 	pub metadata: Vec<(syn::Ident, Vec<syn::Ident>, Vec<syn::Lit>)>,
 	/// A set of usage of instance, must be check for consistency with trait.
-	pub instances: Vec<super::InstanceUsage>,
+	pub instances: Vec<helper::InstanceUsage>,
 	/// If event is declared with instance.
 	pub has_instance: bool,
 	pub is_generic: bool,
@@ -85,14 +88,14 @@ impl syn::parse::Parse for PalletEventAttr {
 }
 
 impl EventDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
-		let mut item = if let syn::Item::Enum(item) = item {
+	pub fn try_from(index: usize, item: &mut syn::Item) -> syn::Result<Self> {
+		let item = if let syn::Item::Enum(item) = item {
 			item
 		} else {
 			return Err(syn::Error::new(item.span(), "Invalid pallet::event, expect item enum"))
 		};
 
-		let mut event_attrs: Vec<PalletEventAttr> = take_item_attrs(&mut item.attrs)?;
+		let mut event_attrs: Vec<PalletEventAttr> = helper::take_item_attrs(&mut item.attrs)?;
 		if event_attrs.len() > 1 {
 			let msg = "Invalid pallet::metadata, expected only one attribute \
 				`pallet::metadata`";
@@ -106,26 +109,26 @@ impl EventDef {
 		}
 		if item.generics.where_clause.is_some() {
 			let msg = "Invalid pallet::event, unexpected where clause";
-			return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
+			return Err(syn::Error::new(item.generics.where_clause.as_ref().unwrap().span(), msg));
 		}
 
 		let has_instance = item.generics.params.len() == 2;
 		let is_generic = item.generics.params.len() > 0;
 
 		let mut instances = vec![];
-		if let Some(u) = super::check_type_def_optional_generics(
+		if let Some(u) = helper::check_type_def_optional_generics(
 			&item.generics,
 			item.ident.span()
 		)? {
 			instances.push(u);
 		}
 
-		syn::parse2::<keyword::Event>(item.ident.to_token_stream())?;
+		let event = syn::parse2::<keyword::Event>(item.ident.to_token_stream())?;
 
 		let metadata = item.variants.iter()
 			.map(|variant| {
 				let name = variant.ident.clone();
-				let docs = get_doc_literals(&variant.attrs);
+				let docs = helper::get_doc_literals(&variant.attrs);
 				let args = variant.fields.iter()
 					.map(|field| {
 						metadata.iter().find(|m| m.0 == field.ty)
@@ -152,10 +155,11 @@ impl EventDef {
 			.collect::<syn::Result<_>>()?;
 
 		Ok(EventDef {
-			item,
+			index,
 			metadata,
 			instances,
 			has_instance,
+			event,
 			is_generic,
 		})
 	}

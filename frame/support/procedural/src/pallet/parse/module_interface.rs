@@ -1,14 +1,15 @@
 use syn::spanned::Spanned;
+use super::helper;
 
 pub struct ModuleInterfaceDef {
-	/// The impl bock that implement ModuleInterface for Module.
-	pub item: syn::ItemImpl,
+	/// The index of error item in pallet module.
+	pub index: usize,
 	/// A set of usage of instance, must be check for consistency with trait.
-	pub instances: Vec<super::InstanceUsage>,
+	pub instances: Vec<helper::InstanceUsage>,
 }
 
 impl ModuleInterfaceDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
+	pub fn try_from(index: usize, item: &mut syn::Item) -> syn::Result<Self> {
 		if let syn::Item::Impl(item) = item {
 			let item_trait = &item.trait_.as_ref()
 				.ok_or_else(|| {
@@ -25,9 +26,9 @@ impl ModuleInterfaceDef {
 			}
 
 			let mut instances = vec![];
-			instances.push(super::check_module_usage(&item.self_ty)?);
+			instances.push(helper::check_module_usage(&item.self_ty)?);
 
-			Ok(Self { item, instances })
+			Ok(Self { index, instances })
 		} else {
 			let msg = "Invalid pallet::module_interface, expect item impl";
 			Err(syn::Error::new(item.span(), msg))

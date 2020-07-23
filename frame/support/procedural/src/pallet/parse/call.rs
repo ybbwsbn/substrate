@@ -1,4 +1,4 @@
-use super::{take_item_attrs, get_doc_literals};
+use super::helper;
 use quote::ToTokens;
 use syn::spanned::Spanned;
 
@@ -13,10 +13,12 @@ mod keyword {
 
 /// Definition of dispatchables typically `impl<T: Trait> Call for Module<T> { ... }`
 pub struct CallDef {
+	/// The where_clause used.
+	pub where_clause: Option<syn::WhereClause>,
 	/// A set of usage of instance, must be check for consistency with trait.
-	pub instances: Vec<super::InstanceUsage>,
-	/// The overal impl item.
-	pub item: syn::ItemImpl,
+	pub instances: Vec<helper::InstanceUsage>,
+	/// The index of call item in pallet module.
+	pub index: usize,
 	/// Information on methods (used for expansion).
 	pub methods: Vec<CallVariantDef>,
 	/// The keyword Call used (contains span).
@@ -76,16 +78,16 @@ impl syn::parse::Parse for ArgAttrIsCompact {
 }
 
 impl CallDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
-		let mut item = if let syn::Item::Impl(item) = item {
+	pub fn try_from(index: usize, item: &mut syn::Item) -> syn::Result<Self> {
+		let item = if let syn::Item::Impl(item) = item {
 			item
 		} else {
 			return Err(syn::Error::new(item.span(), "Invalid pallet::call, expect item impl"));
 		};
 
 		let mut instances = vec![];
-		instances.push(super::check_impl_generics(&item.generics, item.impl_token.span())?);
-		instances.push(super::check_module_usage(&item.self_ty)?);
+		instances.push(helper::check_impl_generics(&item.generics, item.impl_token.span())?);
+		instances.push(helper::check_module_usage(&item.self_ty)?);
 
 		let call = item.trait_.take()
 			.ok_or_else(|| {
@@ -102,7 +104,7 @@ impl CallDef {
 					let msg = "Invalid pallet::call, must have at least origin arg";
 					return Err(syn::Error::new(method.sig.inputs.span(), msg));
 				}
-				super::check_dispatchable_first_arg(&method.sig.inputs[0])?;
+				helper::check_dispatchable_first_arg(&method.sig.inputs[0])?;
 
 				if let syn::ReturnType::Type(_, type_) = &method.sig.output {
 					syn::parse2::<keyword::DispatchResultWithPostInfo>(type_.to_token_stream())?;
@@ -112,7 +114,8 @@ impl CallDef {
 					return Err(syn::Error::new(method.sig.span(), msg));
 				}
 
-				let mut call_var_attrs: Vec<FunctionAttr> = take_item_attrs(&mut method.attrs)?;
+				let mut call_var_attrs: Vec<FunctionAttr> =
+					helper::take_item_attrs(&mut method.attrs)?;
 
 				if call_var_attrs.len() != 1 {
 					let msg = if call_var_attrs.len() == 0 {
@@ -132,7 +135,8 @@ impl CallDef {
 						unreachable!("Only first argument can be receiver");
 					};
 
-					let arg_attrs: Vec<ArgAttrIsCompact> = take_item_attrs(&mut arg.attrs)?;
+					let arg_attrs: Vec<ArgAttrIsCompact> =
+						helper::take_item_attrs(&mut arg.attrs)?;
 
 					if arg_attrs.len() > 1 {
 						let msg = "Invalid pallet::call, argument has too many attributes";
@@ -149,7 +153,7 @@ impl CallDef {
 					args.push((!arg_attrs.is_empty(), arg_ident, arg.ty.clone()));
 				}
 
-				let docs = get_doc_literals(&method.attrs);
+				let docs = helper::get_doc_literals(&method.attrs);
 
 				methods.push(CallVariantDef {
 					fn_: method.sig.ident.clone(),
@@ -164,10 +168,11 @@ impl CallDef {
 		}
 
 		Ok(Self {
+			index,
 			call,
 			instances,
-			item,
-			methods
+			methods,
+			where_clause: item.generics.where_clause.clone(),
 		})
 	}
 }
