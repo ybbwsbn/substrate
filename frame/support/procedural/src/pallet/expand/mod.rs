@@ -8,9 +8,9 @@ use crate::pallet::Def;
 use quote::ToTokens;
 use frame_support_procedural_tools::{generate_hidden_includes};
 
-/// Expand definition:
+/// Expand definition, in particular:
 /// * add some bounds and variants to type defined,
-/// * create some types,
+/// * create some new types,
 /// * impl stuff on them.
 pub fn expand(mut def: Def) -> proc_macro2::TokenStream {
 	let trait_ = trait_::expand_trait_(&mut def);

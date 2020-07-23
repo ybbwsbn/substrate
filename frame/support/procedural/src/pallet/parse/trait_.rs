@@ -20,8 +20,11 @@ pub struct TraitDef {
 }
 
 pub struct ConstMetadataDef {
+	/// Name of the associated type.
 	pub ident: syn::Ident,
+	/// The type in Get, e.g. `u32` in `type Foo: Get<u32>;`
 	pub type_: syn::Type,
+	/// The doc associated
 	pub doc: Vec<syn::Lit>,
 }
 
@@ -41,6 +44,7 @@ impl syn::parse::Parse for ConstMetadataDef  {
 	}
 }
 
+/// Parse for `#[pallet::const_]`
 pub struct TypeAttrConst(proc_macro2::Span);
 
 impl Spanned for TypeAttrConst {

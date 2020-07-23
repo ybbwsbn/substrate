@@ -23,6 +23,9 @@ pub struct EventDef {
 }
 
 impl EventDef {
+	/// Return the generic to be used when using Event type
+	///
+	/// Depending on its definition it can be: ``, `T` or `T, I`
 	pub fn event_use_gen(&self) -> proc_macro2::TokenStream {
 		if self.is_generic {
 			if self.has_instance {
@@ -35,6 +38,7 @@ impl EventDef {
 		}
 	}
 
+	/// Return the generic to be used in `impl<..>` when implementing on Event type.
 	pub fn event_impl_gen(&self) -> proc_macro2::TokenStream {
 		if self.is_generic {
 			if self.has_instance {
@@ -48,11 +52,16 @@ impl EventDef {
 	}
 }
 
+/// Attribute for Event: defines metadata name to use.
+///
+/// Syntax is:
+/// `#[pallet::metadata(SomeType = MetadataName, ...)]`
 pub struct PalletEventAttr {
 	metadata: Vec<(syn::Type, syn::Ident)>,
 	span: proc_macro2::Span,
 }
 
+/// Parse for syntax `$Type = $Ident`.
 fn parse_event_metadata_element(input: syn::parse::ParseStream) -> syn::Result<(syn::Type, syn::Ident)> {
 	let typ = input.parse::<syn::Type>()?;
 	input.parse::<syn::Token![=]>()?;
