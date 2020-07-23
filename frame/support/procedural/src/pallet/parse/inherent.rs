@@ -1,14 +1,14 @@
 use syn::spanned::Spanned;
 
-pub struct InherentDef {
+pub struct InherentDef<'a> {
 	/// The impl block that implement ProvideInherent.
-	pub item: syn::ItemImpl,
+	pub item: &'a mut syn::ItemImpl,
 	/// A set of usage of instance, must be check for consistency with trait.
 	pub instances: Vec<super::InstanceUsage>,
 }
 
 impl InherentDef {
-	pub fn try_from(item: syn::Item) -> syn::Result<Self> {
+	pub fn try_from(item: &'a mut syn::Item) -> syn::Result<Self<'a>> {
 		if let syn::Item::Impl(item) = item {
 			if item.trait_.is_none() {
 				let msg = "Invalid pallet::inherent, expect impl.. ProvideInherent for Module..";

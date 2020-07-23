@@ -11,61 +11,19 @@ use syn::spanned::Spanned;
 use quote::ToTokens;
 
 // TODO TODO: maybe check reserved function or just warn ?
+// TODO TODO: flag to rename frame_system
 
-pub fn def_check(def: &Def) -> syn::Result<()> {
-	let mut instances = vec![];
-	instances.extend_from_slice(&def.call.instances[..]);
-	instances.extend_from_slice(&def.module.instances[..]);
-	instances.extend_from_slice(&def.module_interface.instances[..]);
-	if let Some(event) = &def.event {
-		instances.extend_from_slice(&event.instances[..]);
-	}
-	if let Some(error) = &def.error {
-		instances.extend_from_slice(&error.instances[..]);
-	}
-	if let Some(inherent) = &def.inherent {
-		instances.extend_from_slice(&inherent.instances[..]);
-	}
-	if let Some(origin) = &def.origin {
-		instances.extend_from_slice(&origin.instances[..]);
-	}
+pub fn expand(mut def: Def) -> proc_macro2::TokenStream {
+	let trait_ = expand_trait_(&def);
+	let module = expand_module(&def);
+	let module_interface = expand_module_interface(&def);
+	let call = expand_call(&def);
+	let error = expand_error(&def);
+	let origin = expand_origin(&def);
+	let inherent = expand_inherent(&def);
+	let event = expand_event(&def);
 
-	let mut errors = instances.into_iter()
-		.filter_map(|instances| {
-			if instances.has_instance == def.trait_.has_instance {
-				return None
-			}
-			let msg = if def.trait_.has_instance {
-				"Invalid generic declaration, trait is defined with instance but generic use none"
-			} else {
-				"Invalid generic declaration, trait is defined without instance but generic use \
-					some"
-			};
-			Some(syn::Error::new(instances.span, msg))
-		});
-
-	if let Some(mut first_error) = errors.next() {
-		for error in errors {
-			first_error.combine(error)
-		}
-		Err(first_error)
-	} else {
-		Ok(())
-	}
-}
-
-pub fn expand(def: &Def) -> proc_macro2::TokenStream {
-	let trait_ = expand_trait_(def);
-	let module = expand_module(def);
-	let module_interface = expand_module_interface(def);
-	let call = expand_call(def);
-	let error = expand_error(def);
-	let origin = expand_origin(def);
-	let inherent = expand_inherent(def);
-	let event = expand_event(def);
-	let other_items = &def.other_items;
-
-	quote::quote!(
+	let new_items = quote::quote!(
 		#trait_
 		#module
 		#module_interface
@@ -74,8 +32,12 @@ pub fn expand(def: &Def) -> proc_macro2::TokenStream {
 		#origin
 		#inherent
 		#event
-		#( #other_items )*
-	)
+	);
+
+	def.item.content.as_mut().expect("This is checked by parsing").1
+		.push(syn::Item::Verbatim(new_items));
+
+	def.item.into_token_stream()
 }
 
 fn expand_trait_(def: &Def) -> proc_macro2::TokenStream {
@@ -211,8 +173,8 @@ fn expand_event(def: &Def) -> proc_macro2::TokenStream {
 			quote::quote!(
 				#scrate::event::EventMetadata {
 					name: #scrate::event::DecodeDifferent::Encode(#name),
-					arguments: #scrate::event::DecodeDifferent::Encode(&[ #( #args )* ]),
-					documentation: #scrate::event::DecodeDifferent::Encode(&[ #( #docs )* ]),
+					arguments: #scrate::event::DecodeDifferent::Encode(&[ #( stringify!(#args), )* ]),
+					documentation: #scrate::event::DecodeDifferent::Encode(&[ #( #docs, )* ]),
 				},
 			)
 		});
@@ -225,7 +187,7 @@ fn expand_event(def: &Def) -> proc_macro2::TokenStream {
 			__Ignore(
 				#scrate::sp_std::marker::PhantomData<(#event_use_gen)>,
 				#scrate::Never,
-			),
+			)
 		);
 
 		// Push ignore variant at the end.
@@ -278,20 +240,20 @@ fn expand_error(def: &Def) -> proc_macro2::TokenStream {
 	let item_ident = &error.item.ident;
 	let scrate = &def.scrate();
 	let type_impl_gen = &def.type_impl_generics();
+	let type_impl_static_gen = &def.type_impl_static_generics();
 	let type_use_gen = &def.type_use_generics();
 
-	let phantom_variant = syn::parse_quote!(
+	let phantom_variant: syn::Variant = syn::parse_quote!(
 		#[doc(hidden)]
 		__Ignore(
 			#scrate::sp_std::marker::PhantomData<(#type_use_gen)>,
 			#scrate::Never,
-		),
+		)
 	);
 	item.variants.insert(0, phantom_variant);
 
-	let as_u8_matches = error.variants.iter()
-		.enumerate()
-		.map(|(i, (variant, _))| quote::quote!(Self::#variant => #i,));
+	let as_u8_matches = error.variants.iter().enumerate()
+		.map(|(i, (variant, _))| quote::quote!(Self::#variant => #i as u8,));
 
 	let as_str_matches = error.variants.iter()
 		.map(|(variant, _)| {
@@ -305,8 +267,8 @@ fn expand_error(def: &Def) -> proc_macro2::TokenStream {
 			quote::quote!(
 				#scrate::error::ErrorMetadata {
 					name: #scrate::error::DecodeDifferent::Encode(#variant_str),
-					documentation: #scrate::error::DecodeDifferent::Encode(&[ #( #doc )* ]),
-				}
+					documentation: #scrate::error::DecodeDifferent::Encode(&[ #( #doc, )* ]),
+				},
 			)
 		});
 
@@ -343,12 +305,12 @@ fn expand_error(def: &Def) -> proc_macro2::TokenStream {
 			}
 		}
 
-		impl<#type_impl_gen> From<#item_ident<#type_use_gen>>
+		impl<#type_impl_static_gen> From<#item_ident<#type_use_gen>>
 			for #scrate::sp_runtime::DispatchError
 		{
 			fn from(err: #item_ident<#type_use_gen>) -> Self {
 				let index = <
-					<T as #scrate::frame_system::Trait>::ModuleToIndex
+					<T as frame_system::Trait>::ModuleToIndex
 					as #scrate::traits::ModuleToIndex
 				>::module_to_index::<Module<#type_use_gen>>()
 					.expect("Every active module has an index in the runtime; qed") as u8;
@@ -555,6 +517,7 @@ fn expand_origin(def: &Def) -> proc_macro2::TokenStream {
 
 /// Parsed definition of a pallet.
 pub struct Def {
+	item: syn::ItemMod,
 	trait_: trait_::TraitDef,
 	module: module::ModuleDef,
 	module_interface: module_interface::ModuleInterfaceDef,
@@ -564,19 +527,16 @@ pub struct Def {
 	event: Option<event::EventDef>,
 	origin: Option<origin::OriginDef>,
 	inherent: Option<inherent::InherentDef>,
-	other_items: Vec<syn::Item>,
 }
 
 impl Def {
-	pub fn try_from(item: syn::ItemMod) -> syn::Result<Self> {
+	pub fn try_from(mut item: syn::ItemMod) -> syn::Result<Self> {
 		let item_span = item.span().clone();
-		let items = &mut item.content.expect("TODO TODO: mandatory inline").1;
-
-		// First passe get information for generations
-		// Second passe generate stuff with information and modify items with information
-		//
-		// Maybe the first passe should return something constructed with def and second passe will
-		// only modify it.
+		let items = &mut item.content.as_mut()
+			.ok_or_else(|| {
+				let msg = "Invalid pallet definition, expect mod to be inlined.";
+				syn::Error::new(item_span, msg)
+			})?.1;
 
 		let mut trait_def = None;
 		let mut module_def = None;
@@ -608,7 +568,10 @@ impl Def {
 			}
 		}
 
-		Ok(Def {
+		*items = other_items;
+
+		let def = Def {
+			item: item,
 			trait_: trait_def.ok_or_else(|| syn::Error::new(item_span, "Missing pallet::trait_"))?,
 			module: module_def
 				.ok_or_else(|| syn::Error::new(item_span, "Missing pallet::module"))?,
@@ -619,8 +582,53 @@ impl Def {
 			event: event_def,
 			origin: origin_def,
 			inherent: inherent_def,
-			other_items,
-		})
+		};
+
+		def.check_instance_usage()?;
+
+		Ok(def)
+	}
+
+	fn check_instance_usage(&self) -> syn::Result<()> {
+		let mut instances = vec![];
+		instances.extend_from_slice(&self.call.instances[..]);
+		instances.extend_from_slice(&self.module.instances[..]);
+		instances.extend_from_slice(&self.module_interface.instances[..]);
+		if let Some(event) = &self.event {
+			instances.extend_from_slice(&event.instances[..]);
+		}
+		if let Some(error) = &self.error {
+			instances.extend_from_slice(&error.instances[..]);
+		}
+		if let Some(inherent) = &self.inherent {
+			instances.extend_from_slice(&inherent.instances[..]);
+		}
+		if let Some(origin) = &self.origin {
+			instances.extend_from_slice(&origin.instances[..]);
+		}
+
+		let mut errors = instances.into_iter()
+			.filter_map(|instances| {
+				if instances.has_instance == self.trait_.has_instance {
+					return None
+				}
+				let msg = if self.trait_.has_instance {
+					"Invalid generic declaration, trait is defined with instance but generic use none"
+				} else {
+					"Invalid generic declaration, trait is defined without instance but generic use \
+						some"
+				};
+				Some(syn::Error::new(instances.span, msg))
+			});
+
+		if let Some(mut first_error) = errors.next() {
+			for error in errors {
+				first_error.combine(error)
+			}
+			Err(first_error)
+		} else {
+			Ok(())
+		}
 	}
 
 	/// * either `T: Trait`
@@ -779,9 +787,11 @@ fn check_type_def_generics(
 }
 
 /// Check the syntax:
-/// * either `T`
+/// * either `` (no generics
+/// * or `T`
+/// * or `T: Trait`
 /// * or `T, I = DefaultInstance`
-/// * or nothing
+/// * or `T: Trait<I>, I: Instance = DefaultInstance`
 ///
 /// `span` is used in case generics is empty (empty generics has span == call_site).
 ///
@@ -790,7 +800,8 @@ fn check_type_def_optional_generics(
 	gen: &syn::Generics,
 	span: proc_macro2::Span,
 ) -> syn::Result<Option<InstanceUsage>> {
-	let expected = "expect `` or `T` or `T, I = DefaultInstance`";
+	let expected = "expect `` or `T` or `T: Trait` or `T, I = DefaultInstance` or \
+		`T: Trait<I>, I: Instance = DefaultInstance`";
 	pub struct CheckTypeDefOptionalGenerics(Option<InstanceUsage>);
 	impl syn::parse::Parse for CheckTypeDefOptionalGenerics {
 		fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
@@ -804,15 +815,43 @@ fn check_type_def_optional_generics(
 			};
 
 			input.parse::<keyword::T>()?;
-			if input.peek(syn::Token![,]) {
+
+			if input.is_empty() {
+				return Ok(Self(Some(instance_usage)))
+			}
+
+			let lookahead = input.lookahead1();
+			if lookahead.peek(syn::Token![,]) {
 				instance_usage.has_instance = true;
 				input.parse::<syn::Token![,]>()?;
 				input.parse::<keyword::I>()?;
 				input.parse::<syn::Token![=]>()?;
 				input.parse::<keyword::DefaultInstance>()?;
-			}
 
-			Ok(Self(Some(instance_usage)))
+				Ok(Self(Some(instance_usage)))
+			} else if lookahead.peek(syn::Token![:]) {
+				input.parse::<syn::Token![:]>()?;
+				input.parse::<keyword::Trait>()?;
+
+				if input.is_empty() {
+					return Ok(Self(Some(instance_usage)))
+				}
+
+				instance_usage.has_instance = true;
+				input.parse::<syn::Token![<]>()?;
+				input.parse::<keyword::I>()?;
+				input.parse::<syn::Token![>]>()?;
+				input.parse::<syn::Token![,]>()?;
+				input.parse::<keyword::I>()?;
+				input.parse::<syn::Token![:]>()?;
+				input.parse::<keyword::Instance>()?;
+				input.parse::<syn::Token![=]>()?;
+				input.parse::<keyword::DefaultInstance>()?;
+
+				Ok(Self(Some(instance_usage)))
+			} else {
+				Err(lookahead.error())
+			}
 		}
 	}
 

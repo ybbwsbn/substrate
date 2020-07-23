@@ -1,9 +1,11 @@
 use super::{take_item_attrs, get_doc_literals};
 use syn::spanned::Spanned;
+use quote::ToTokens;
 
 /// List of additional token to be used for parsing.
 mod keyword {
 	syn::custom_keyword!(metadata);
+	syn::custom_keyword!(Event);
 }
 
 pub struct EventDef {
@@ -111,9 +113,14 @@ impl EventDef {
 		let is_generic = item.generics.params.len() > 0;
 
 		let mut instances = vec![];
-		if let Some(u) = super::check_type_def_optional_generics(&item.generics, item.span())? {
+		if let Some(u) = super::check_type_def_optional_generics(
+			&item.generics,
+			item.ident.span()
+		)? {
 			instances.push(u);
 		}
+
+		syn::parse2::<keyword::Event>(item.ident.to_token_stream())?;
 
 		let metadata = item.variants.iter()
 			.map(|variant| {

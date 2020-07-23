@@ -1,5 +1,11 @@
 use super::get_doc_literals;
 use syn::spanned::Spanned;
+use quote::ToTokens;
+
+/// List of additional token to be used for parsing.
+mod keyword {
+	syn::custom_keyword!(Error);
+}
 
 /// This checks error declaration as a enum declaration with only variants without fields nor
 /// discriminant.
@@ -31,6 +37,8 @@ impl ErrorDef {
 			let msg = "Invalid pallet::error, unexpected where clause";
 			return Err(syn::Error::new(item.generics.where_clause.unwrap().span(), msg));
 		}
+
+		syn::parse2::<keyword::Error>(item.ident.to_token_stream())?;
 
 		let variants = item.variants.iter()
 			.map(|variant| {
