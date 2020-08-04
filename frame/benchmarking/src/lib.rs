@@ -583,7 +583,7 @@ macro_rules! benchmark_backend {
 				]
 			}
 
-			fn instance(&self, components: &[($crate::BenchmarkParameter, u32)])
+			fn instance(&self, mut _whitelist: &[Vec<u8>], components: &[($crate::BenchmarkParameter, u32)])
 				-> Result<Box<dyn FnOnce() -> Result<(), &'static str>>, &'static str>
 			{
 				$(
@@ -600,6 +600,10 @@ macro_rules! benchmark_backend {
 				)*
 				$( $param_instancer ; )*
 				$( $post )*
+
+				// Add whitelist to DB
+				#[cfg(not(test))]
+				$crate::benchmarking::set_whitelist(_whitelist.to_vec());
 
 				Ok(Box::new(move || -> Result<(), &'static str> { $eval; Ok(()) }))
 			}
@@ -671,14 +675,14 @@ macro_rules! selected_benchmark {
 				}
 			}
 
-			fn instance(&self, components: &[($crate::BenchmarkParameter, u32)])
+			fn instance(&self, whitelist: &[Vec<u8>], components: &[($crate::BenchmarkParameter, u32)])
 				-> Result<Box<dyn FnOnce() -> Result<(), &'static str>>, &'static str>
 			{
 				match self {
 					$(
 						Self::$bench => <
 							$bench as $crate::BenchmarkingSetup<T $(, $bench_inst)? >
-						>::instance(&$bench, components),
+						>::instance(&$bench, whitelist, components),
 					)*
 				}
 			}
@@ -736,9 +740,6 @@ macro_rules! impl_benchmark {
 					_ => return Err("Could not find extrinsic."),
 				};
 
-				// Add whitelist to DB
-				$crate::benchmarking::set_whitelist(whitelist.to_vec());
-
 				// Warm up the DB
 				$crate::benchmarking::commit_db();
 				$crate::benchmarking::wipe_db();
@@ -762,7 +763,7 @@ macro_rules! impl_benchmark {
 						// benchmark.
 						let closure_to_benchmark = <
 							SelectedBenchmark as $crate::BenchmarkingSetup<T $(, $instance)?>
-						>::instance(&selected_benchmark, &c)?;
+						>::instance(&selected_benchmark, whitelist, &c)?;
 
 						// Set the block number to at least 1 so events are deposited.
 						if $crate::Zero::is_zero(&frame_system::Module::<T>::block_number()) {

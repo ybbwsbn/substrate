@@ -181,6 +181,7 @@ fn benchmarks_macro_works() {
 
 	let closure = <SelectedBenchmark as BenchmarkingSetup<Test>>::instance(
 		&selected,
+		&[],
 		&[(BenchmarkParameter::b, 1)],
 	).expect("failed to create closure");
 
@@ -198,6 +199,7 @@ fn benchmarks_macro_rename_works() {
 
 	let closure = <SelectedBenchmark as BenchmarkingSetup<Test>>::instance(
 		&selected,
+		&[],
 		&[(BenchmarkParameter::b, 1)],
 	).expect("failed to create closure");
 
@@ -215,6 +217,7 @@ fn benchmarks_macro_works_for_non_dispatchable() {
 
 	let closure = <SelectedBenchmark as BenchmarkingSetup<Test>>::instance(
 		&selected,
+		&[],
 		&[(BenchmarkParameter::x, 1)],
 	).expect("failed to create closure");
 
