@@ -583,7 +583,7 @@ macro_rules! benchmark_backend {
 				]
 			}
 
-			fn instance(&self, mut _whitelist: &[Vec<u8>], components: &[($crate::BenchmarkParameter, u32)])
+			fn instance(&self, mut __whitelist: &[Vec<u8>], components: &[($crate::BenchmarkParameter, u32)])
 				-> Result<Box<dyn FnOnce() -> Result<(), &'static str>>, &'static str>
 			{
 				$(
@@ -603,7 +603,7 @@ macro_rules! benchmark_backend {
 
 				// Add whitelist to DB
 				#[cfg(not(test))]
-				$crate::benchmarking::set_whitelist(_whitelist.to_vec());
+				$crate::benchmarking::set_whitelist(__whitelist.to_vec());
 
 				Ok(Box::new(move || -> Result<(), &'static str> { $eval; Ok(()) }))
 			}
@@ -611,6 +611,7 @@ macro_rules! benchmark_backend {
 			fn verify(&self, components: &[($crate::BenchmarkParameter, u32)])
 				-> Result<Box<dyn FnOnce() -> Result<(), &'static str>>, &'static str>
 			{
+				let mut __whitelist = Vec::<Vec<u8>>::new();
 				$(
 					let $common = $common_from;
 				)*

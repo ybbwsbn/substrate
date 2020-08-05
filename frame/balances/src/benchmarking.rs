@@ -39,8 +39,12 @@ benchmarks! {
 	// * Transfer will kill the sender account.
 	// * Transfer will create the recipient account.
 	transfer {
+		let u in 0 .. 1000;
+
 		let existential_deposit = T::ExistentialDeposit::get();
-		let caller = account("caller", 0, SEED);
+		let caller = account("caller", u, SEED);
+
+		__whitelist.append(frame_system::Account::<T>::hashed_key_for(caller));
 
 		// Give some multiple of the existential deposit + creation fee + transfer fee
 		let balance = existential_deposit.saturating_mul(ED_MULTIPLIER.into());
